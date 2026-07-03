@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>職能導向課程開發總部 — iCAP 計畫書生成器</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>body{background:#f3f4f6;}</style>
+</head>
+<body class="font-sans text-gray-800">
+  <div class="max-w-4xl mx-auto p-6 md:p-10 space-y-8">
+
+    <header class="bg-white rounded-2xl shadow-md p-8 border border-gray-200">
+      <h1 class="text-3xl font-black flex items-center gap-3">
+        <i class="fa-solid fa-graduation-cap text-blue-600"></i>
+        職能導向課程開發總部
+      </h1>
+      <p class="text-gray-500 mt-2">iCAP 計畫書生成器 · 以「模板複製」方式，讓每個課程主題各自擁有一份計畫書工具與雲端資料庫。</p>
+    </header>
+
+    <section class="bg-white rounded-2xl shadow-sm p-8 border border-gray-200">
+      <h2 class="text-xl font-bold mb-4 flex items-center gap-2"><i class="fa-solid fa-folder-open text-amber-500"></i> 現有專案</h2>
+      <div class="grid gap-4 md:grid-cols-2">
+
+        <a href="../projects/example-course/index.html" class="block p-5 rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md transition group">
+          <div class="font-bold text-lg group-hover:text-blue-700">範例課程（示範專案）</div>
+          <div class="text-sm text-gray-500 mt-1"><code>projects/example-course/</code></div>
+          <div class="text-xs text-amber-600 mt-2"><i class="fa-solid fa-triangle-exclamation"></i> 使用佔位 GAS 網址，僅供介面示範</div>
+        </a>
+
+        <!-- 新增專案後，於此複製一個卡片，將 href 指向 ../projects/<slug>/index.html -->
+
+      </div>
+    </section>
+
+    <section class="bg-white rounded-2xl shadow-sm p-8 border border-gray-200 space-y-3">
+      <h2 class="text-xl font-bold flex items-center gap-2"><i class="fa-solid fa-wand-magic-sparkles text-emerald-500"></i> 新增一個課程專案</h2>
+      <p class="text-sm text-gray-600">在 repo 根目錄執行下列指令，即可由模板複製出新專案：</p>
+      <pre class="bg-slate-900 text-slate-100 rounded-lg p-4 text-sm overflow-x-auto"><code>bash scripts/new-project.sh &lt;slug&gt; "專案名稱" "GAS /exec 網址"</code></pre>
+      <p class="text-xs text-gray-500">每個專案各自部署 <code>template/gas/Code.gs</code> 與專屬 Google Sheet。詳見 README。</p>
+    </section>
+
+    <footer class="text-center text-xs text-gray-400 pt-4">
+      chatgptcjcu-boop/icap-course-dev · 路徑用英文 kebab-case，內文用繁體中文
+    </footer>
+  </div>
+</body>
+</html>

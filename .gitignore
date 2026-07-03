@@ -1,0 +1,8 @@
+# 每個專案的「真實」設定（含真正 GAS /exec 網址）— 不進公開版控
+projects/**/config.local.js
+template/plan-book/config.local.js
+
+# 暫存
+_tmp/
+*.log
+.DS_Store

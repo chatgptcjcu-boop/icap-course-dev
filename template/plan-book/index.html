@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iCAP 職能導向課程計畫書生成器（雲端直連版）</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 FontAwesome 圖示 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 引入 React 與 Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 每個專案專屬設定（PROJECT_NAME、GAS_API_URL）。由 scripts/new-project.sh 產生；template 內僅提供 config.example.js -->
+    <script src="./config.js"></script>
+    <!-- 選用：真實 GAS 網址可只寫在 config.local.js（已被 .gitignore 排除，不進公開版控）；存在時覆蓋 config.js -->
+    <script src="./config.local.js" onerror="void 0"></script>
+
+    <style>
+        body { background-color: #f3f4f6; }
+        .a4-page { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.5); }
+
+        @media print {
+            body { background: white; color: black; }
+            .no-print { display: none !important; }
+            .a4-page { box-shadow: none !important; max-width: 100% !important; padding: 0 !important; margin: 0 !important; border: none !important; }
+            .print-page-break { page-break-before: always; }
+        }
+    </style>
+</head>
+<body class="font-sans text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+
+        // ------------------------------------------------------------------
+        // GAS 部署網址（Google Apps Script Web App /exec URL）
+        //
+        // 本系統採「直接連線」架構：前端直接以 fetch() 連線 GAS Web App，
+        // 由 GAS 讀寫 Google Sheet 作為計畫書內容的儲存後端。
+        //
+        // 網址優先序：網址參數 ?api= > localStorage(gasApiUrl) > 下方預設值。
+        // 若要更換部署網址，可在畫面右上角「變更連線網址」，或改下方常數。
+        // ⚠ 若此為敏感資訊，請改以部署時注入或由使用者於畫面輸入，勿寫死於版本控制。
+        // ------------------------------------------------------------------
+        // 佔位網址：本 repo 為「公開」，嚴禁寫死真實 /exec 部署網址。
+        // 真實網址由以下任一方式於「執行期」注入（不進版控）：
+        //   1. 網址參數 ?api=...   2. 畫面右上「變更連線網址」(存 localStorage)
+        //   3. 同目錄 config.js 內 window.PLAN_BOOK_CONFIG.GAS_API_URL（各專案自建，已被 .gitignore 排除）
+        const PLACEHOLDER_GAS_API_URL = 'https://script.google.com/macros/s/REPLACE_WITH_YOUR_DEPLOYMENT_ID/exec';
+        const PLAN_BOOK_CONFIG = (typeof window !== 'undefined' && typeof window.PLAN_BOOK_CONFIG === 'object' && window.PLAN_BOOK_CONFIG) || {};
+        const PROJECT_NAME = PLAN_BOOK_CONFIG.PROJECT_NAME || 'iCAP 職能導向課程計畫書';
+        const DEFAULT_GAS_API_URL = PLAN_BOOK_CONFIG.GAS_API_URL || PLACEHOLDER_GAS_API_URL;
+        const GAS_API_URL = (new URLSearchParams(window.location.search).get('api'))
+            || window.localStorage.getItem('gasApiUrl')
+            || DEFAULT_GAS_API_URL;
+
+        // 直接連線 GAS 的共用請求函式（統一走 text/plain 降低 CORS 預檢）
+        const callGas = (payload) =>
+            fetch(GAS_API_URL, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('API 連線失敗 (HTTP ' + res.status + ')');
+                return res.json();
+            })
+            .then(data => {
+                if (data && data.status === 'error') throw new Error(data.message || '後端回傳錯誤');
+                return data;
+            });
+
+        // 預設公版範例資料 (經紅、藍、標竿隊長聯合修改版)
+        const DEFAULT_DATA = {
+            basicInfo: {
+                courseName: '外籍看護居家照顧華語溝通實務班', industry: '重點缺工產業-長照與跨國勞動力', level: '2', hours: 32,
+                targetAudience: '由仲介機構或雇主推薦，甫入台或有在職進修需求之外籍家庭看護工(印尼、越南為主)', competencyCode: 'HRM4301-001 (跨國勞動力仲介從業人員) 及 長照基準',
+            },
+            proposalDetails: {
+                background: '一、社會環境與產業缺口 (SDGs對接)\n臺灣邁入超高齡社會，依據國家發展委員會推估，至 2026 年老年人口將突破 21%。在少子化與家庭結構改變的衝擊下，外籍家庭看護工已成為我國長照體系核心人力。本計畫響應 SDGs 3 (健康與福祉) 及勞動部「移工留用政策」，致力提升照護品質。\n\n二、實務痛點分析\n多數外籍看護工初次入臺時，常面臨「聽不懂雇主指令」、「無法準確傳達生理需求」及「無法正確辨識醫療資訊」等三大挑戰，衍生照護疏失甚至醫患糾紛。\n\n三、對接政策與職能\n本計畫深入對接「跨國勞動力仲介從業人員」職能基準。透過 iCAP 發展模式，精準萃取第一線居家照護所需之「華語溝通實務職能」，解決日常照護與緊急應變之溝通痛點。',
+                objectives: '【質化目標】\n1. 建構標準化教學模組：開發符合 iCAP 規範之「做中學」雙語教材，並建立客觀之情境實作評量機制，翻轉傳統填鴨式語文教學。\n2. 數位輔助學習：開發線上情境聽力模擬音檔(QR Code)，突破時空限制，提升學習留存率。\n3. 提升跨文化適應力：協助外籍看護理解臺灣家庭照護文化，減少勞雇摩擦。\n\n【量化目標】\n1. 課程開發：完成 32 小時職能導向課程大綱、多媒體教材及評量工具開發。\n2. 試辦教學：預計於 115 年第 3 季辦理 1 場次試辦教學，培育至少 20 名外籍看護。\n3. 學習成效：參訓學員結訓實作評量（L2）通過率達 80% 以上；學員滿意度（L1）平均達 4.0 分（滿分 5 分）以上方為達標。',
+                benefits: '一、 對參訓學員：\n降低語言焦慮，提升在臺工作適應力。具備基礎照護華語能力，能正確執行指令，並強化緊急狀況應變能力，保障自身及被照顧者安全。\n\n二、 對雇主家庭：\n減少溝通不良產生之誤解。確保被照顧者之生理需求能被正確處理，提升居家照護品質，減輕家屬壓力。\n\n三、 對產業發展與社會：\n提供一套具國家公信力（iCAP 認證）之訓練模組。響應政府「留用優秀外國中階技術人力」政策，穩定長照人力供給，帶動整體產業服務品質升級。',
+                prerequisites: '1. 基本條件：已合法入臺，並從事家庭看護工作滿一個月以上者。\n2. 語言能力：具備基礎母語（印尼語或越南語）讀寫能力，無須具備華語基礎。\n3. 實務經驗：具備基礎居家照護經驗者。\n4. 報名管道：透過直聘中心、仲介公司推薦，或雇主同意放假參訓者優先錄取。',
+            },
+            addie: {
+                analysis: '【痛點來源與驗證】配合「跨國勞動力精進方案」，本團隊發放 150 份雇主問卷，並召開產、官、學三方焦點小組會議。確立外籍看護核心痛點為「日常生理需求聽解」、「醫囑藥袋識別」與「緊急突發事件通報」三大任務。並經焦點小組指出，『文化適應』為語言溝通順暢之前提，故一併列為核心職能缺口。',
+                design: '【專家組成與課綱推導】邀請 3 位長照機構負責人(產業代表)、2 位移工語言培訓教授(教學專家)及 1 位臨床護理師(實務專家)召開 3 次設計會議。會中將分析階段之痛點轉化為 4 個教學單元。專家一致決議捨棄傳統筆試，全面改採「情境角色扮演(Role-Play)」推導出 10 項可觀察、可測量之外顯行為指標。',
+                development: '【教材與評量工具產出】\n1. 教材：發展《外籍看護居家照顧華語講義》及「台華語對照日常照護圖卡」，並導入數位化「線上情境聽力模擬音檔 (QR Code掃描即聽)」。\n2. 評量：針對單元二、三，由實務專家共同編製「119 緊急通報演練檢核表」與「藥袋識別實作檢核表 (Rubric 3點量表)」。',
+                implementation: '【試辦規劃與資源配置】規劃辦理 1 場次試辦教學，招收 20 名外籍看護。為確保實作品質，採小班制教學，並以 1:10 比例配置具備長照背景之「雙語助教(印尼/越南)」，確保學員在角色扮演演練時能獲得即時指導與安全防護。',
+                evaluation: '【雙軌評量機制設定】\nL1 反應評估：採中印/中越雙語對照之滿意度問卷，且規定整體滿意度須達 4.0 分(滿分5分)以上。\nL2 學習評估：結訓前須通過「藥袋辨識」與「119模擬報案」兩大情境實作。由兩位具備華語/長照雙重背景之評委，依據客觀檢核表給分，總分達 70 分以上始核發研習證明。',
+            },
+            syllabus: [
+                { unit: '單元一：居家生活與身體照顧溝通', hours: 10, method: '講述法、雙語圖卡配對、角色扮演', objective: '能使用基礎華語與受照顧者進行日常起居與餐飲餵食之互動溝通。', indicators: '1. 能正確聽懂並說出 15 種以上日常照顧動作中文(如:翻身、拍背、上廁所)。\n2. 能聽懂並正確執行受照顧者表達的立即性生理需求指令(如:口渴拿水、疼痛指認)。\n3. 能正確使用華語回答受照顧者關於飲食喜好與飽足感的提問。' },
+                { unit: '單元二：就醫配合與醫囑聽解', hours: 8, method: '講述法、實物展示(藥袋)、情境模擬', objective: '能聽懂醫院診間的基本護理衛教，並正確識別中文藥袋資訊。', indicators: '1. 能正確圈選/指出藥袋上「飯前、飯後、睡前」與「服藥劑量」等關鍵字。\n2. 能聽懂並正確操作護理人員指示之傷口照護動作(如:擦藥膏、貼紗布)。\n3. 能向雇主正確轉述(或利用圖卡指認)醫師診斷的主要病況(如:發燒、血壓高)。' },
+                { unit: '單元三：突發狀況與緊急通報', hours: 8, method: '情境模擬、電話實作演練', objective: '在面臨跌倒、昏迷等居家緊急事件時，能利用電話進行有效求救。', indicators: '1. 能在模擬情境中正確撥打 119，並於 5 秒內用華語報出完整居家地址。\n2. 能清晰口述受照顧者當前意識狀態與傷勢(包含部位與症狀，如:頭流血、叫不醒)。\n3. 能在線上聽懂並正確配合 119 勤務中心人員之初步急救動作指示(如:不要移動患者)。' },
+                { unit: '單元四：台華語常用詞彙與文化適應', hours: 6, method: '講述法、小組互動、影片賞析', objective: '能辨識臺灣家庭常用的基本照顧台語詞彙，降低跨文化溝通障礙。', indicators: '1. 能聽懂並正確配對 20 個常見台語照顧詞彙的華語圖卡(如:食飽未、痛、食藥仔)。\n2. 能在實境演練中，主動使用基本禮貌性客套語向雇主打招呼或表達感謝。' }
+            ],
+            budgetItems: [
+                { id: 1, category: '人事費', name: '專案助理薪資 (負責會議紀錄/教材校對/行政試辦) 1人x3個月', amount: 105000 },
+                { id: 2, category: '專家出席費', name: '職能分析/教材審查會議 (產官學勞 5人x3次x2500)', amount: 37500 },
+                { id: 3, category: '講座鐘點費', name: '外聘主講師 (40小時x2000) 及 雙語助教 (40小時x1000)', amount: 120000 },
+                { id: 4, category: '稿費/翻譯費', name: '講義印越語對照翻譯 (具名專業譯者，2萬字x1.2)', amount: 24000 },
+                { id: 5, category: '教材與印刷費', name: '情境字卡(含刀模)與彩色講義大宗印刷 (附廠商三聯發票)', amount: 110000 },
+                { id: 6, category: '多媒體製作費', name: '線上看護聽力數位影片與音檔開發 (委外發包)', amount: 550000 },
+                { id: 7, category: '場地與行政費', name: '無障礙實境模擬場地租借、雙語問卷印刷、郵電', amount: 53500 },
+            ]
+        };
+
+        const IcapGenerator = () => {
+            const [activeTab, setActiveTab] = useState('basic');
+            const [basicInfo, setBasicInfo] = useState(DEFAULT_DATA.basicInfo);
+            const [proposalDetails, setProposalDetails] = useState(DEFAULT_DATA.proposalDetails);
+            const [addie, setAddie] = useState(DEFAULT_DATA.addie);
+            const [syllabus, setSyllabus] = useState(DEFAULT_DATA.syllabus);
+            const [budgetItems, setBudgetItems] = useState(DEFAULT_DATA.budgetItems);
+            const [checklist, setChecklist] = useState({
+                ttqs: true, experts: true, bilingual: true, noEquipment: true, rubric: true, independentAcc: false
+            });
+
+            // 雲端連線狀態（直接連線 GAS；不再降級為離線單機模式）
+            const [savedVersions, setSavedVersions] = useState([]);
+            const [versionName, setVersionName] = useState('');
+            const [connStatus, setConnStatus] = useState({ loading: true, message: '正在直接連線 Google Sheet 雲端資料庫...', error: false });
+
+            // 直接連線載入雲端版本清單（失敗時明確顯示錯誤並提供重試，不切換離線）
+            const loadVersions = () => {
+                setConnStatus({ loading: true, message: '正在直接連線 Google Sheet 雲端資料庫...', error: false });
+                callGas({ action: 'load' })
+                    .then(data => {
+                        setSavedVersions(data.versions || []);
+                        setConnStatus({ loading: false, message: `已直接連線雲端資料庫，載入 ${(data.versions || []).length} 個版本`, error: false });
+                    })
+                    .catch(err => {
+                        console.error('GAS 連線錯誤:', err);
+                        setConnStatus({ loading: false, message: '雲端連線失敗：' + err.message + '。請確認 GAS 部署網址與網路後重試。', error: true });
+                    });
+            };
+
+            useEffect(() => { loadVersions(); }, []);
+
+            // 變更 GAS 部署網址（存入 localStorage 後重新載入）
+            const changeApiUrl = () => {
+                const next = window.prompt('請輸入 GAS 部署網址（Web App /exec URL）：', GAS_API_URL);
+                if (next && next.trim()) {
+                    window.localStorage.setItem('gasApiUrl', next.trim());
+                    window.location.reload();
+                }
+            };
+
+            // 儲存至 Google Sheet（直接連線；不再阻擋離線）
+            const saveCurrentVersion = () => {
+                if (!versionName.trim()) { alert('請輸入版本名稱！'); return; }
+                setConnStatus({ loading: true, message: '資料寫入 Google Sheet 中...', error: false });
+
+                const currentData = { basicInfo, proposalDetails, addie, syllabus, budgetItems };
+
+                callGas({ action: 'save', name: versionName, data: currentData })
+                    .then(data => {
+                        setSavedVersions(data.versions || []);
+                        const savedName = versionName;
+                        setVersionName('');
+                        setConnStatus({ loading: false, message: '儲存成功！資料已同步至 Google Sheet。', error: false });
+                        alert(`版本「${savedName}」已安全儲存至雲端！`);
+                    })
+                    .catch(err => {
+                        setConnStatus({ loading: false, message: '儲存失敗：' + err.message, error: true });
+                        alert('儲存失敗！請確認 GAS 部署網址與後端程式碼。錯誤：' + err.message);
+                    });
+            };
+
+            // 從雲端載入歷史版本
+            const loadVersion = (version) => {
+                if (window.confirm(`確定要從雲端載入 [${version.name}] 嗎？這將覆蓋當前畫面。`)) {
+                    setBasicInfo(version.data.basicInfo);
+                    setProposalDetails(version.data.proposalDetails);
+                    setAddie(version.data.addie);
+                    setSyllabus(version.data.syllabus);
+                    setBudgetItems(version.data.budgetItems);
+                    setConnStatus({ loading: false, message: `已載入版本：${version.name}`, error: false });
+                }
+            };
+
+            // 從雲端刪除歷史版本
+            const deleteVersion = (id, name, e) => {
+                e.stopPropagation();
+                if (window.confirm(`確定要從雲端永久刪除版本 [${name}] 嗎？`)) {
+                    setConnStatus({ loading: true, message: '資料刪除中...', error: false });
+                    callGas({ action: 'delete', id: id })
+                        .then(data => {
+                            setSavedVersions(data.versions || []);
+                            setConnStatus({ loading: false, message: '刪除成功', error: false });
+                        })
+                        .catch(err => setConnStatus({ loading: false, message: '刪除失敗：' + err.message, error: true }));
+                }
+            };
+
+            // 經費自動核算邏輯
+            const budgetCalc = useMemo(() => {
+                const total = budgetItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                const subsidy = Math.min(total * 0.7, 1000000);
+                const selfFund = total - subsidy;
+                const personnelTotal = budgetItems.filter(i => i.category === '人事費').reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                const personnelRatio = total > 0 ? (personnelTotal / total) : 0;
+                const isPersonnelValid = personnelRatio <= (1/3);
+                return { total, subsidy, selfFund, personnelTotal, personnelRatio, isPersonnelValid };
+            }, [budgetItems]);
+
+            // 表單操作處理
+            const handleBudgetChange = (id, field, value) => {
+                setBudgetItems(budgetItems.map(item => item.id === id ? { ...item, [field]: field === 'amount' ? Number(value) : value } : item));
+            };
+            const addBudgetItem = () => {
+                const newId = budgetItems.length > 0 ? Math.max(...budgetItems.map(i => i.id)) + 1 : 1;
+                setBudgetItems([...budgetItems, { id: newId, category: '其他費', name: '新增項目', amount: 0 }]);
+            };
+            const removeBudgetItem = (id) => setBudgetItems(budgetItems.filter(item => item.id !== id));
+            const handleSyllabusChange = (index, field, value) => {
+                const updated = [...syllabus]; updated[index][field] = value; setSyllabus(updated);
+            };
+
+            // 自訂 Tab 按鈕元件
+            const TabButton = ({ id, iconClass, label }) => (
+                <button onClick={() => setActiveTab(id)} className={`flex items-center space-x-2 px-5 py-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${activeTab === id ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}>
+                    <i className={`${iconClass} w-4 h-4`}></i><span>{label}</span>
+                </button>
+            );
+
+            return (
+                <div className="min-h-screen p-4 md:p-8">
+                    <div className="max-w-6xl mx-auto space-y-6">
+
+                        {/* 標頭儀表板 */}
+                        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
+                            <div>
+                                <h1 className="text-2xl font-black text-gray-900 flex items-center gap-3">
+                                    <i className="fa-brands fa-react text-blue-500 animate-spin" style={{animationDuration: '4s'}}></i>
+                                    <span>{PROJECT_NAME}</span> <span className="text-sm px-2 py-1 rounded-lg ml-2 font-bold border bg-emerald-100 text-emerald-700 border-emerald-300">雲端直連版</span>
+                                </h1>
+                                <p className="text-gray-500 mt-1.5 text-sm font-medium">直接連線 Google Apps Script，計畫書內容存於 Google Sheet；含完整防呆與主計核銷邏輯</p>
+                            </div>
+                            <button onClick={changeApiUrl} className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1.5 shrink-0">
+                                <i className="fa-solid fa-link"></i> 變更連線網址
+                            </button>
+                        </div>
+
+                        {/* 雲端儲存與狀態面板 */}
+                        <div className="bg-gradient-to-r from-slate-900 to-blue-950 text-white rounded-xl p-6 shadow-md border border-slate-800 no-print">
+                            <div className="flex flex-col md:flex-row gap-6">
+                                <div className="flex-1 space-y-4">
+                                    <h3 className="text-md font-bold flex items-center gap-2 text-blue-300">
+                                        <i className="fa-solid fa-server"></i> Google Sheet 即時備份庫（直接連線）
+                                    </h3>
+                                    <div className="flex items-center gap-2 text-sm">
+                                        {connStatus.loading ? <i className="fa-solid fa-circle-notch fa-spin text-amber-400"></i> : <i className={`fa-solid ${connStatus.error ? 'fa-triangle-exclamation text-rose-400' : 'fa-wifi text-emerald-400'}`}></i>}
+                                        <span className={connStatus.loading ? 'text-amber-200' : (connStatus.error ? 'text-rose-200' : 'text-emerald-200')}>{connStatus.message}</span>
+                                        {connStatus.error && !connStatus.loading && (
+                                            <button onClick={loadVersions} className="ml-2 text-xs bg-white/10 hover:bg-white/20 border border-white/20 rounded px-2 py-1 font-bold transition">重新連線</button>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input type="text" placeholder="命名此版本 (如: 專家審查後修正版)..." value={versionName} onChange={e => setVersionName(e.target.value)} className="flex-1 px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                        <button onClick={saveCurrentVersion} disabled={connStatus.loading} className="font-bold text-sm px-6 py-2 rounded-lg shadow-lg transition bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 disabled:cursor-not-allowed">
+                                            寫入資料庫
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 border-t md:border-t-0 md:border-l border-white/10 md:pl-6 pt-4 md:pt-0">
+                                    <h3 className="text-md font-bold text-blue-300 mb-3 text-sm">雲端歷史版本</h3>
+                                    <div className="h-28 overflow-y-auto space-y-1.5 pr-2 custom-scrollbar">
+                                        {connStatus.error ? (
+                                            <p className="text-xs text-rose-200/70 italic flex items-center justify-center h-full border border-dashed border-rose-200/20 rounded-lg px-3 text-center">無法連線雲端，請確認 GAS 部署網址後點「重新連線」</p>
+                                        ) : savedVersions.length === 0 ? (
+                                            <p className="text-xs text-white/40 italic flex items-center justify-center h-full border border-dashed border-white/10 rounded-lg">尚無儲存紀錄</p>
+                                        ) : (
+                                            savedVersions.map(v => (
+                                                <div key={v.id} onClick={() => loadVersion(v)} className="flex justify-between items-center bg-white/5 hover:bg-white/20 border border-white/10 rounded-lg p-2 text-xs cursor-pointer transition group">
+                                                    <div className="font-semibold text-blue-100 truncate flex-1 group-hover:text-white"><i className="fa-solid fa-cloud-arrow-down mr-1.5 opacity-50"></i>{v.name}</div>
+                                                    <div className="text-white/40 font-mono shrink-0 mr-3">{v.date}</div>
+                                                    <button onClick={(e) => deleteVersion(v.id, v.name, e)} className="text-red-400 hover:text-white hover:bg-red-500 rounded px-2 py-1 font-bold shrink-0 transition">刪除</button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 主要導覽分頁區塊 */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden no-print">
+                            <div className="flex border-b border-gray-200 overflow-x-auto bg-gray-50/50 custom-scrollbar">
+                                <TabButton id="basic" iconClass="fa-solid fa-gear" label="1. 基本設定" />
+                                <TabButton id="addie" iconClass="fa-regular fa-file-lines" label="2. ADDIE 發展" />
+                                <TabButton id="syllabus" iconClass="fa-solid fa-graduation-cap" label="3. 課綱與指標" />
+                                <TabButton id="budget" iconClass="fa-solid fa-calculator" label="4. 經費編列" />
+                                <TabButton id="audit" iconClass="fa-solid fa-list-check" label="5. 核銷稽核" />
+                                <TabButton id="preview" iconClass="fa-solid fa-print" label="6. 企劃預覽與列印" />
+                            </div>
+
+                            <div className="p-6">
+                                {/* Tab 1: 基本設定 */}
+                                {activeTab === 'basic' && (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <h2 className="text-lg font-bold text-gray-800 border-b-2 border-gray-100 pb-2">課程基本對接資訊</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div><label className="block text-sm font-semibold text-gray-700 mb-1">課程名稱</label><input type="text" value={basicInfo.courseName} onChange={e => setBasicInfo({...basicInfo, courseName: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
+                                        <div><label className="block text-sm font-semibold text-gray-700 mb-1">對接產業類別</label><input type="text" value={basicInfo.industry} onChange={e => setBasicInfo({...basicInfo, industry: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
+                                        <div><label className="block text-sm font-semibold text-gray-700 mb-1">對接之國家職能基準 (代碼與任務)</label><input type="text" value={basicInfo.competencyCode} onChange={e => setBasicInfo({...basicInfo, competencyCode: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
+                                        <div className="flex gap-4">
+                                            <div className="flex-1"><label className="block text-sm font-semibold text-gray-700 mb-1">iCAP 職能級別</label><select value={basicInfo.level} onChange={e => setBasicInfo({...basicInfo, level: e.target.value})} className="w-full p-2.5 border rounded-lg bg-gray-50"><option value="1">第 1 級</option><option value="2">第 2 級 (基礎實務)</option><option value="3">第 3 級 (獨立作業/高額獎勵)</option><option value="4">第 4 級</option></select></div>
+                                            <div className="flex-1"><label className="block text-sm font-semibold text-gray-700 mb-1">總授課時數</label><input type="number" value={basicInfo.hours} onChange={e => setBasicInfo({...basicInfo, hours: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg bg-gray-50" /></div>
+                                        </div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">招生目標受眾 (Target Audience)</label><input type="text" value={basicInfo.targetAudience} onChange={e => setBasicInfo({...basicInfo, targetAudience: e.target.value})} className="w-full p-2.5 border rounded-lg bg-gray-50" /></div>
+
+                                        <div className="md:col-span-2 border-t-2 border-gray-100 pt-6 mt-2"><h3 className="text-md font-bold text-gray-800 mb-4">企劃書核心章節撰寫</h3></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">計畫緣起與背景</label><textarea rows="4" value={proposalDetails.background} onChange={e => setProposalDetails({...proposalDetails, background: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">計畫具體目標 (質化與量化)</label><textarea rows="3" value={proposalDetails.objectives} onChange={e => setProposalDetails({...proposalDetails, objectives: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">參訓先備條件</label><textarea rows="2" value={proposalDetails.prerequisites} onChange={e => setProposalDetails({...proposalDetails, prerequisites: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">專案預期效益</label><textarea rows="3" value={proposalDetails.benefits} onChange={e => setProposalDetails({...proposalDetails, benefits: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* Tab 2: ADDIE */}
+                                {activeTab === 'addie' && (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-900 text-sm mb-6"><i className="fa-solid fa-triangle-exclamation text-xl shrink-0 mt-0.5 text-amber-600"></i><div><strong>iCAP 審查退件最高雷區：</strong><ul className="list-disc pl-5 mt-1 space-y-1 text-amber-800"><li>分析 (A) 指出的痛點，必須在設計 (D) 階段轉換為課綱單元。</li><li>評估 (E) 階段必須有客觀檢核表 (Checklist) 作為證據。</li></ul></div></div>
+                                    {[
+                                    { key: 'analysis', label: '1. 分析階段 (Analysis)', desc: '詳細交代來源、問卷、產業專家焦點小組會議之數據。' },
+                                    { key: 'design', label: '2. 設計階段 (Design)', desc: '記錄三類專家決議，推導出各單元大綱與具體評量方法。' },
+                                    { key: 'development', label: '3. 發展階段 (Development)', desc: '說明講義、圖卡、多媒體影音之編撰過程，與實作評量檢核表的制定。' },
+                                    { key: 'implementation', label: '4. 實施階段 (Implementation)', desc: '交代試辦班次規模、受訓人數限制、雙語助教配置。' },
+                                    { key: 'evaluation', label: '5. 評估階段 (Evaluation)', desc: '制定評估門檻（如 L2 實作考驗 70 分及格）。' },
+                                    ].map((item) => (
+                                    <div key={item.key} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                                        <label className="block text-sm font-bold text-gray-800">{item.label}</label>
+                                        <p className="text-xs text-gray-500">{item.desc}</p>
+                                        <textarea rows={4} value={addie[item.key]} onChange={e => setAddie({...addie, [item.key]: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" />
+                                    </div>
+                                    ))}
+                                </div>
+                                )}
+
+                                {/* Tab 3: 課綱與指標 */}
+                                {activeTab === 'syllabus' && (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <h2 className="text-lg font-bold text-gray-800 border-b-2 border-gray-100 pb-2">單元課綱與行為指標設定</h2>
+                                    <div className="space-y-6">
+                                        {syllabus.map((unit, index) => (
+                                            <div key={index} className="p-5 border rounded-xl bg-gray-50 border-gray-200 space-y-4 shadow-sm relative overflow-hidden">
+                                                <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500"></div>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-600 mb-1">單元名稱</label><input type="text" value={unit.unit} onChange={e => handleSyllabusChange(index, 'unit', e.target.value)} className="w-full p-2 bg-white border rounded-lg text-sm" /></div>
+                                                    <div><label className="block text-xs font-bold text-gray-600 mb-1">時數 / 教學法</label><div className="flex gap-2"><input type="number" value={unit.hours} onChange={e => handleSyllabusChange(index, 'hours', Number(e.target.value))} className="w-16 p-2 bg-white border rounded-lg text-sm text-center" /><input type="text" value={unit.method} onChange={e => handleSyllabusChange(index, 'method', e.target.value)} className="flex-1 p-2 bg-white border rounded-lg text-sm" /></div></div>
+                                                </div>
+                                                <div><label className="block text-xs font-bold text-gray-600 mb-1">單元教學目標</label><input type="text" value={unit.objective} onChange={e => handleSyllabusChange(index, 'objective', e.target.value)} className="w-full p-2 bg-white border rounded-lg text-sm" /></div>
+                                                <div><label className="block text-xs font-bold text-gray-600 mb-1 text-blue-800">對應之「可評量」行為指標 (一列一個，對應至結訓檢核表)</label><textarea rows={3} value={unit.indicators} onChange={e => handleSyllabusChange(index, 'indicators', e.target.value)} className="w-full p-3 bg-white border border-blue-200 rounded-lg text-sm text-blue-900 focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* Tab 4: 經費編列 */}
+                                {activeTab === 'budget' && (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                                    <div className="xl:col-span-2 space-y-4">
+                                        <div className="flex justify-between items-center">
+                                            <h2 className="text-lg font-bold text-gray-800">會計科目編列表 (實支實付)</h2>
+                                            <button onClick={addBudgetItem} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition"><i className="fa-solid fa-plus mr-1"></i>新增科目</button>
+                                        </div>
+                                        <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
+                                        <table className="w-full text-sm text-left bg-white">
+                                            <thead className="bg-gray-100 border-b border-gray-200">
+                                            <tr><th className="p-3 w-40 text-gray-700">會計科目</th><th className="p-3 text-gray-700">用途摘要</th><th className="p-3 text-right w-36 text-gray-700">金額 (NT$)</th><th className="p-3 text-center w-16">操作</th></tr>
+                                            </thead>
+                                            <tbody>
+                                            {budgetItems.map((item) => (
+                                                <tr key={item.id} className="border-b hover:bg-gray-50">
+                                                <td className="p-2"><select value={item.category} onChange={(e) => handleBudgetChange(item.id, 'category', e.target.value)} className="w-full p-2.5 border rounded-md outline-none focus:ring-2 focus:ring-blue-500"><option>人事費</option><option>專家出席費</option><option>講座鐘點費</option><option>稿費/翻譯費</option><option>教材與印刷費</option><option>多媒體製作費</option><option>場地與行政費</option><option>其他費</option></select></td>
+                                                <td className="p-2"><input type="text" value={item.name} onChange={(e) => handleBudgetChange(item.id, 'name', e.target.value)} className="w-full p-2.5 border rounded-md text-sm outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                                                <td className="p-2"><input type="number" value={item.amount} onChange={(e) => handleBudgetChange(item.id, 'amount', e.target.value)} className="w-full p-2.5 border rounded-md text-right font-mono font-bold text-blue-900 bg-blue-50/30 outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                                                <td className="p-2 text-center"><button onClick={() => removeBudgetItem(item.id)} className="text-red-400 hover:text-red-600 p-2 transition"><i className="fa-solid fa-trash-can"></i></button></td>
+                                                </tr>
+                                            ))}
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900 text-white rounded-2xl p-6 h-fit shadow-xl border border-slate-700 relative overflow-hidden">
+                                        <i className="fa-solid fa-calculator absolute -right-6 -top-6 text-8xl text-white/5 pointer-events-none"></i>
+                                        <h3 className="text-md font-bold mb-5 text-slate-200 relative z-10">主計自動檢核系統</h3>
+                                        <div className="space-y-4 relative z-10">
+                                            <div className="flex justify-between border-b border-slate-700 pb-3"><span className="text-slate-400">總計畫開發成本</span><span className="font-mono text-2xl font-bold">${budgetCalc.total.toLocaleString()}</span></div>
+                                            <div className="flex justify-between items-center text-emerald-400 font-bold bg-emerald-950/60 p-3 rounded-lg border border-emerald-900/50"><span>政府補助款 (70%)</span><span className="font-mono text-xl">${budgetCalc.subsidy.toLocaleString()}</span></div>
+                                            <div className="flex justify-between text-amber-400 p-2 px-3"><span>自籌配合款 (30%)</span><span className="font-mono text-lg">${budgetCalc.selfFund.toLocaleString()}</span></div>
+                                            <div className="mt-6 pt-6 border-t border-slate-700">
+                                                <div className={`p-4 rounded-xl border ${budgetCalc.isPersonnelValid ? 'bg-emerald-950/30 border-emerald-800/40 text-emerald-300' : 'bg-rose-950/50 border-rose-600/50 text-rose-300'}`}>
+                                                    <div className="font-bold text-sm flex items-center gap-2">
+                                                        {budgetCalc.isPersonnelValid ? <i className="fa-solid fa-check-circle"></i> : <i className="fa-solid fa-triangle-exclamation"></i>} 人事費法定門檻 (上限 33.3%)
+                                                    </div>
+                                                    <div className="mt-1 font-mono pl-6">當前佔比：{(budgetCalc.personnelRatio * 100).toFixed(1)}% (${budgetCalc.personnelTotal.toLocaleString()})</div>
+                                                    {!budgetCalc.isPersonnelValid && <div className="mt-3 text-xs bg-rose-900 p-2 rounded text-white font-bold ml-6">警告：人事費已超過總預算 1/3，違反法規將被退件！</div>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* Tab 5: 核銷稽核 */}
+                                {activeTab === 'audit' && (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <h2 className="text-lg font-bold text-gray-800 border-b-2 border-gray-100 pb-2 mb-6">送審前自我稽核管制作業</h2>
+                                    <div className="grid md:grid-cols-2 gap-5">
+                                    {[
+                                        { id: 'ttqs', label: '辦訓資格', desc: '機構具備有效之 TTQS 企業/訓練機構版銅牌(含)以上證書。' },
+                                        { id: 'experts', label: '專家認證', desc: '已附上三類專家名冊、全員親簽簽到簿、以及至少 4 張清晰開會相片。' },
+                                        { id: 'bilingual', label: '學員問卷', desc: '滿意度問卷已設計為「中印/中越對照雙語版本」，且由學員親筆簽名。' },
+                                        { id: 'rubric', label: '評量規準', desc: '已完成「突發通報/備藥實作」檢核規準(Rubric)，及格分數訂為70分。' },
+                                        { id: 'noEquipment', label: '品名稽核', desc: '會計發票全數具有品名、數量、單價，且絕無購買「資本門設備」。' },
+                                        { id: 'independentAcc', label: '帳務查核', desc: '已開設專款專戶，財務帳實施「三專分帳」登錄獨立會計科目。' },
+                                    ].map((item) => (
+                                        <label key={item.id} className={`flex items-start p-5 rounded-xl border-2 cursor-pointer transition-all ${checklist[item.id] ? 'border-emerald-500 bg-emerald-50/50 shadow-sm' : 'border-gray-200 bg-white hover:border-blue-300'}`}>
+                                        <input type="checkbox" className="w-5 h-5 mt-0.5 text-emerald-600 rounded focus:ring-emerald-500" checked={checklist[item.id]} onChange={(e) => setChecklist({...checklist, [item.id]: e.target.checked})} />
+                                        <div className="ml-4">
+                                            <div className={`text-sm font-bold ${checklist[item.id] ? 'text-emerald-900' : 'text-gray-800'}`}>{item.label}</div>
+                                            <div className="text-xs mt-1 text-gray-500 leading-relaxed">{item.desc}</div>
+                                        </div>
+                                        </label>
+                                    ))}
+                                    </div>
+                                </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Tab 6: 企劃預覽與列印 */}
+                        {activeTab === 'preview' && (
+                        <div className="space-y-6 animate-in fade-in">
+                            <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-5 rounded-xl border border-blue-200 shadow-sm no-print gap-4 border-l-4 border-l-blue-500">
+                                <div className="text-gray-800 font-bold flex items-center gap-2">
+                                    <i className="fa-solid fa-file-pdf text-red-500 text-xl"></i> 已自動彙整 A4 標準格式計畫書
+                                </div>
+                                <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-8 py-3 rounded-xl font-bold shadow-lg transition transform hover:-translate-y-0.5">
+                                    <i className="fa-solid fa-print"></i> 匯出 / 列印官方計畫書
+                                </button>
+                            </div>
+
+                            <div className="bg-white a4-page max-w-[21cm] mx-auto font-serif text-gray-900 border border-gray-300 relative">
+                                <div className="p-12 md:p-16 space-y-12">
+
+                                    {/* 封面標題 */}
+                                    <div className="text-center pt-8 pb-10 border-b-4 border-double border-gray-900">
+                                        <h2 className="text-lg text-gray-600 mb-3 tracking-[0.25em]">中華民國勞動部勞動力發展署</h2>
+                                        <h1 className="text-[32px] font-bold mb-8 text-black tracking-widest leading-snug">
+                                            發展職能導向課程計畫書<br/>
+                                            <span className="text-[26px] text-blue-900 border-b-[3px] border-blue-900 pb-2 inline-block mt-8 px-6">{basicInfo.courseName}</span>
+                                        </h1>
+                                        <div className="mt-16 text-left inline-block">
+                                            <p className="text-lg mb-2">提案單位：________________________</p>
+                                            <p className="text-lg mb-2">計畫期程：自核定日起至 115 年 11 月 30 日止</p>
+                                            <p className="text-lg mb-2">計畫總經費：新臺幣 {budgetCalc.total.toLocaleString()} 元</p>
+                                        </div>
+                                    </div>
+
+                                    {/* 第一章：計畫緣起與目標 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">壹、 計畫緣起與目標</h2>
+                                        <div className="space-y-6">
+                                            <div>
+                                                <h3 className="font-bold mb-2 text-lg">一、 計畫緣起與產業痛點需求</h3>
+                                                <p className="text-justify leading-8 text-[15px] whitespace-pre-line">{proposalDetails.background}</p>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold mb-2 text-lg">二、 計畫具體目標</h3>
+                                                <p className="text-justify leading-8 text-[15px] whitespace-pre-line ml-4 bg-gray-50 p-4 border border-gray-200">{proposalDetails.objectives}</p>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    {/* 第二章：課程基本規劃資料 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">貳、 課程基本規劃資料</h2>
+                                        <table className="w-full border-collapse border border-gray-400 text-[15px]">
+                                            <tbody>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold w-[25%] text-center">課程名稱</td><td className="border border-gray-400 p-4 font-bold text-blue-900">{basicInfo.courseName}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">對接產業類別</td><td className="border border-gray-400 p-4">{basicInfo.industry}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">對接國家職能基準</td><td className="border border-gray-400 p-4">{basicInfo.competencyCode}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">iCAP 職能級別</td><td className="border border-gray-400 p-4">第 {basicInfo.level} 級</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">總授課時數</td><td className="border border-gray-400 p-4">{basicInfo.hours} 小時</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">目標招生對象</td><td className="border border-gray-400 p-4">{basicInfo.targetAudience}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">參訓先備條件</td><td className="border border-gray-400 p-4 text-justify whitespace-pre-line">{proposalDetails.prerequisites}</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </section>
+
+                                    {/* 第三章：ADDIE 發展歷程 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">參、 職能分析與課程發展歷程 (ADDIE)</h2>
+                                        <div className="space-y-6 leading-8 text-justify text-[15px]">
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">一、 分析階段 (Analysis)</h3>
+                                                <p className="indent-8">{addie.analysis}</p>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">二、 設計階段 (Design)</h3>
+                                                <p className="indent-8">{addie.design}</p>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">三、 發展階段 (Development)</h3>
+                                                <p className="indent-8">{addie.development}</p>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">四、 實施階段 (Implementation)</h3>
+                                                <p className="indent-8">{addie.implementation}</p>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">五、 評估階段 (Evaluation)</h3>
+                                                <p className="indent-8">{addie.evaluation}</p>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    {/* 第四章：課程大綱與行為指標 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-4">肆、 課程單元大綱與行為指標對應表</h2>
+                                        <p className="mb-4 text-sm text-gray-600">※ 註：本表所列之「可評量行為指標」，均已透過實務專家會議審議確認，並將全數對應至結訓實作檢核表(Checklist)中，作為學員學習成效(L2)之評估依據。</p>
+                                        <table className="w-full border-collapse border-[3px] border-gray-800 text-[14px]">
+                                            <thead className="bg-gray-200 border-b-[3px] border-gray-800">
+                                                <tr>
+                                                    <th className="border border-gray-800 p-3 w-[20%]">單元名稱與時數</th>
+                                                    <th className="border border-gray-800 p-3 w-[15%]">主要教學法</th>
+                                                    <th className="border border-gray-800 p-3 w-[25%]">單元教學目標</th>
+                                                    <th className="border border-gray-800 p-3 w-[40%]">對應之可評量行為指標 (Behavioral Indicators)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {syllabus.map((unit, idx) => (
+                                                <tr key={idx}>
+                                                    <td className="border border-gray-600 p-4 font-bold bg-gray-50 text-center">{unit.unit}<br/><span className="text-gray-500 font-normal mt-1 inline-block">({unit.hours} 小時)</span></td>
+                                                    <td className="border border-gray-600 p-4 text-center">{unit.method}</td>
+                                                    <td className="border border-gray-600 p-4 text-justify leading-relaxed">{unit.objective}</td>
+                                                    <td className="border border-gray-600 p-4 whitespace-pre-line font-medium text-blue-900 bg-blue-50/30 leading-relaxed">{unit.indicators}</td>
+                                                </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </section>
+
+                                    {/* 第五章：預期效益 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">伍、 計畫預期效益</h2>
+                                        <p className="leading-8 text-[15px] whitespace-pre-line text-justify bg-gray-50 p-6 border border-gray-200">{proposalDetails.benefits}</p>
+                                    </section>
+
+                                    {/* 第六章：經費概算表 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">陸、 計畫研發經費概算表</h2>
+                                        <table className="w-full border-collapse border-[3px] border-gray-800 text-[15px]">
+                                            <thead className="bg-gray-200 border-b-[3px] border-gray-800">
+                                            <tr>
+                                                <th className="border border-gray-800 p-3 w-[25%]">會計科目</th>
+                                                <th className="border border-gray-800 p-3 w-[50%]">單據核銷用途摘要說明</th>
+                                                <th className="border border-gray-800 p-3 w-[25%] text-right">小計 (NT$)</th>
+                                            </tr>
+                                            </thead>
+                                            <tbody>
+                                            {budgetItems.map(item => (
+                                                <tr key={item.id}>
+                                                    <td className="border border-gray-500 p-3 text-center font-bold bg-gray-50">{item.category}</td>
+                                                    <td className="border border-gray-500 p-3">{item.name}</td>
+                                                    <td className="border border-gray-500 p-3 text-right font-mono">${item.amount.toLocaleString()}</td>
+                                                </tr>
+                                            ))}
+                                            </tbody>
+                                            <tfoot className="font-bold">
+                                            <tr className="bg-gray-100 border-t-[3px] border-gray-800"><td colSpan="2" className="border border-gray-500 p-4 text-right">專案開發成本總計 (A)：</td><td className="border border-gray-500 p-4 text-right text-[17px]">${budgetCalc.total.toLocaleString()}</td></tr>
+                                            <tr className="text-blue-900 bg-blue-50/50"><td colSpan="2" className="border border-gray-500 p-4 text-right">向發展署申請補助款額度 (A * 70%)：</td><td className="border border-gray-500 p-4 text-right">${budgetCalc.subsidy.toLocaleString()}</td></tr>
+                                            <tr className="text-red-900 bg-red-50/50"><td colSpan="2" className="border border-gray-500 p-4 text-right">辦訓機構自籌配合款額度 (A * 30%)：</td><td className="border border-gray-500 p-4 text-right">${budgetCalc.selfFund.toLocaleString()}</td></tr>
+                                            </tfoot>
+                                        </table>
+
+                                        <div className="mt-8 p-6 border-2 border-gray-400 bg-gray-50 leading-relaxed text-[15px]">
+                                            <div className="font-bold mb-3 border-b border-gray-300 pb-2 text-lg">【經費審計切結聲明】</div>
+                                            <ol className="list-decimal pl-5 space-y-3">
+                                                <li>本計畫人事費用佔比為 <strong className="font-mono text-lg text-blue-800">{(budgetCalc.personnelRatio * 100).toFixed(1)}%</strong>，<span className={budgetCalc.isPersonnelValid ? 'text-green-700 font-bold' : 'text-red-600 font-bold'}>{budgetCalc.isPersonnelValid ? '經核算符合' : '不符合'}政府各機關法規不得超過總經費三分之一 (33.3%) 之上限限制。</span></li>
+                                                <li>切結本預算表內所列之所有經費項目，均無涉及購買硬體設備等資本門支出，符合「發展職能基準及職能導向課程補助要點」實支實付規定。</li>
+                                                <li>本單位承諾於計畫核定後，將設立專款專戶，並確實依核定之會計科目分帳登錄。</li>
+                                            </ol>
+                                            <div className="mt-8 flex justify-end">
+                                                <div className="text-center">
+                                                    <p className="mb-8">提案單位負責人簽章：</p>
+                                                    <p>___________________________</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+                            </div>
+                        </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<IcapGenerator />);
+    </script>
+</body>
+</html>
