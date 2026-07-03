@@ -16,6 +16,8 @@
     <script src="./config.js"></script>
     <!-- 選用：真實 GAS 網址可只寫在 config.local.js（已被 .gitignore 排除，不進公開版控）；存在時覆蓋 config.js -->
     <script src="./config.local.js" onerror="void 0"></script>
+    <!-- 標竿「100 分」範例資料（供「查看標竿範例」與「一鍵填入標竿範例」使用） -->
+    <script src="./exemplar.js" onerror="void 0"></script>
 
     <style>
         body { background-color: #f3f4f6; }
@@ -99,7 +101,171 @@
                 throw err;
             });
 
-        // 預設公版範例資料 (經紅、藍、標竿隊長聯合修改版)
+        // ------------------------------------------------------------------
+        // 職能導向課程品質認證審查指標（ADDIE 五構面 15 項）
+        // 來源：data/quality_review/rubric_course_addie.json（id + 短標題）
+        // 用於各欄位／對照表旁的「對應指標」標註。
+        // ------------------------------------------------------------------
+        const RUBRIC_INDICATORS = {
+            'A-1':  { dim: '分析 Analyze',   title: '具體職能依據（OCS／職能單元／自行分析）', critical: true },
+            'A-2':  { dim: '分析 Analyze',   title: '需求分析與學習者分析完整', critical: true },
+            'A-3':  { dim: '分析 Analyze',   title: '課程地圖／學習路徑對應職能單元', critical: true },
+            'D-1':  { dim: '設計 Design',    title: '教學目標對應行為指標與職能級別', critical: true },
+            'D-2':  { dim: '設計 Design',    title: '課程大綱／單元結構完整（時數、職能對照）', critical: true },
+            'D-3':  { dim: '設計 Design',    title: '評量設計於設計階段已規劃', critical: false },
+            'DV-1': { dim: '發展 Develop',   title: '教材與教學資源完備', critical: true },
+            'DV-2': { dim: '發展 Develop',   title: '師資資格與產業經驗符合要求', critical: true },
+            'DV-3': { dim: '發展 Develop',   title: '教學方法與職能內涵類型匹配（K/S/A）', critical: false },
+            'I-1':  { dim: '實施 Implement', title: '試教／開課實施紀錄', critical: true },
+            'I-2':  { dim: '實施 Implement', title: 'iCAP 平台開課與學員資料登錄流程', critical: false },
+            'I-3':  { dim: '實施 Implement', title: '課程總時數 ≥ 12 小時', critical: true },
+            'E-1':  { dim: '評估 Evaluate',  title: '評量方式對應教學目標與行為指標', critical: true },
+            'E-2':  { dim: '評估 Evaluate',  title: '學習成果證據類型明確', critical: true },
+            'E-3':  { dim: '評估 Evaluate',  title: '課程自我管考與持續改善機制', critical: false },
+        };
+
+        // ADDIE 各階段欄位／對照表結構（驅動精靈式編輯 UI、完成度計算與預覽）
+        // required=true → 顯示「必填」徽章並納入完成度分母。
+        // indicator → 對應 RUBRIC_INDICATORS 之 id。
+        const ADDIE_SCHEMA = {
+            analysis: {
+                label: '1. 分析階段 (Analysis)', dim: '分析 Analyze', dimColor: 'rose',
+                desc: '交代需求來源、問卷與焦點小組數據，確立職能依據與能力缺口。',
+                fields: [
+                    { key: 'industryNeed', label: '產業／職業需求驗證與需求來源', rows: 5, required: true, indicator: 'A-2',
+                      hint: '標竿隊長：需求要「雙軌」佐證——量化（問卷樣本數、回收率、關鍵痛點百分比）＋質化（產官學焦點小組共識），且可追溯到原始來源。' },
+                    { key: 'competencyBasis', label: '具體職能依據（公告 OCS／職能單元代碼／自行職能分析）', rows: 3, required: true, indicator: 'A-1',
+                      hint: '標竿隊長：寫出職能基準名稱與代碼、對接之工作任務與職能級別，讓職能來源與課程目標明確連結。' },
+                    { key: 'learnerAnalysis', label: '學員先備條件與能力缺口分析', rows: 3, required: true, indicator: 'A-2',
+                      hint: '標竿隊長：界定目標族群、先備條件與「缺口」，說明課程如何補足（如重聽說、降讀寫）。' },
+                ],
+                tables: [
+                    { key: 'competencyMapTable', label: '職能基準對應表（能力單元 → 課程）', required: true, indicator: 'A-3',
+                      hint: '標竿隊長：CU—課程單元—職能級別需可追溯，這是課程地圖對應職能的關鍵佐證。',
+                      columns: [ { key: 'cu', label: '能力單元／工作任務' }, { key: 'course', label: '對應課程單元' }, { key: 'level', label: '職能級別' } ] },
+                ],
+            },
+            design: {
+                label: '2. 設計階段 (Design)', dim: '設計 Design', dimColor: 'amber',
+                desc: '將痛點轉為可測量學習目標，發展課程地圖與評量藍圖。',
+                fields: [
+                    { key: 'learningObjectives', label: '學習目標（對應職能行為指標與級別）', rows: 4, required: true, indicator: 'D-1',
+                      hint: '標竿隊長：目標須 SMART、可評量，並逐一對應行為指標與職能級別。' },
+                    { key: 'assessmentPlan', label: '評量方式規劃（形成性＋總結性）', rows: 3, required: true, indicator: 'D-3',
+                      hint: '標竿隊長：於設計階段即畫出評量藍圖（形成性＋總結性、及格門檻、Rubric），避免事後補作。' },
+                ],
+                tables: [
+                    { key: 'courseMapTable', label: '能力單元對應課程地圖表（單元／時數／職能對照）', required: true, indicator: 'D-2',
+                      hint: '標竿隊長：單元、時數、對應職能／行為指標要齊全，時數加總須與總時數一致。',
+                      columns: [ { key: 'unit', label: '課程單元' }, { key: 'hours', label: '時數' }, { key: 'objective', label: '對應職能／行為指標' } ] },
+                ],
+            },
+            development: {
+                label: '3. 發展階段 (Development)', dim: '發展 Develop', dimColor: 'emerald',
+                desc: '產出教材、教案、教學方法與師資，並留下專家審查紀錄。',
+                fields: [
+                    { key: 'materials', label: '教材／教案／數位輔具開發', rows: 4, required: true, indicator: 'DV-1',
+                      hint: '標竿隊長：教材需覆蓋所有職能單元；數位化（音檔、QR Code）為加分亮點。' },
+                    { key: 'teachingMethods', label: '教學方法與職能內涵類型匹配（K/S/A）', rows: 3, required: true, indicator: 'DV-3',
+                      hint: '標竿隊長：依知識/技能/態度配比選教學法（講授、演練、討論），呼應職能內涵。' },
+                    { key: 'expertReview', label: '教材試教／專家審查紀錄', rows: 3, required: false, indicator: 'DV-1',
+                      hint: '標竿隊長：保留教材與 Rubric 之專家審查會議紀錄，強化可稽核性。' },
+                ],
+                tables: [
+                    { key: 'instructorTable', label: '師資資格對應表（姓名／資格／產業經驗／授課單元）', required: true, indicator: 'DV-2',
+                      hint: '標竿隊長：師資須具備職能相符之資格與產業經驗，並附資歷證明對照。',
+                      columns: [ { key: 'name', label: '師資／角色' }, { key: 'qualification', label: '資格／專長' }, { key: 'experience', label: '產業／實務經驗' }, { key: 'unit', label: '授課單元' } ] },
+                ],
+            },
+            implementation: {
+                label: '4. 實施階段 (Implementation)', dim: '實施 Implement', dimColor: 'sky',
+                desc: '規劃開課、學員遴選、實施排程，並知悉平台登錄流程。',
+                fields: [
+                    { key: 'enrollmentPlan', label: '開課計畫與學員遴選', rows: 4, required: true, indicator: 'I-1',
+                      hint: '標竿隊長：交代試辦期程、招生人數上限、遴選管道與品質控管（小班、雙語助教）。' },
+                    { key: 'platformProcess', label: 'iCAP 平台開課與學員資料登錄流程', rows: 3, required: false, indicator: 'I-2',
+                      hint: '標竿隊長：說明開課前建立班次、留存簽到教案照片、結訓登錄名冊等可稽核流程。' },
+                ],
+                tables: [
+                    { key: 'scheduleTable', label: '實施排程表（日期／單元／時數／師資）', required: true, indicator: 'I-3',
+                      hint: '標竿隊長：排程時數加總須 ≥ 12 小時（系統會自動加總檢核）。',
+                      columns: [ { key: 'date', label: '日期／週次' }, { key: 'unit', label: '課程單元' }, { key: 'hours', label: '時數' }, { key: 'instructor', label: '授課師資' } ] },
+                ],
+            },
+            evaluation: {
+                label: '5. 評估階段 (Evaluation)', dim: '評估 Evaluate', dimColor: 'violet',
+                desc: '四層次評量對照、學習成果證據與回饋改善機制。',
+                fields: [
+                    { key: 'evidenceTypes', label: '學習成果證據類型（作品集／測驗／實作檢核）', rows: 3, required: true, indicator: 'E-2',
+                      hint: '標竿隊長：列出可留存備查之證據（錄影、Rubric 正本、及格證明），且能對應行為指標。' },
+                    { key: 'improvementMechanism', label: '回饋改善與自我管考機制', rows: 3, required: true, indicator: 'E-3',
+                      hint: '標竿隊長：訂定異常觸發條件與滾動式修正流程，形成回饋循環與修訂紀錄。' },
+                ],
+                tables: [
+                    { key: 'kirkpatrickTable', label: '四層次評量對照表（反應／學習／行為／成果）', required: true, indicator: 'E-1',
+                      hint: '標竿隊長：每一層次的評量方式與工具須對應教學目標與行為指標，並訂通過標準。',
+                      columns: [ { key: 'level', label: '評量層次' }, { key: 'method', label: '評量方式' }, { key: 'tool', label: '評量工具' }, { key: 'threshold', label: '通過／達標標準' } ] },
+                ],
+            },
+        };
+        const ADDIE_STAGE_KEYS = ['analysis', 'design', 'development', 'implementation', 'evaluation'];
+
+        // 標竿範例（由 exemplar.js 注入；缺檔時以空物件降級，功能自動隱藏）
+        const EXEMPLAR = (typeof window !== 'undefined' && window.PLAN_BOOK_EXEMPLAR) || {};
+
+        // 依 schema 建立單一階段的空白結構（欄位=空字串、對照表=空陣列）
+        const emptyStage = (stageKey) => {
+            const schema = ADDIE_SCHEMA[stageKey];
+            const obj = { narrative: '' };
+            schema.fields.forEach(f => { obj[f.key] = ''; });
+            schema.tables.forEach(t => { obj[t.key] = []; });
+            return obj;
+        };
+        const emptyAddie = () => {
+            const a = {};
+            ADDIE_STAGE_KEYS.forEach(k => { a[k] = emptyStage(k); });
+            return a;
+        };
+        // 由標竿範例組出某階段完整內容（供 DEFAULT_DATA 與一鍵填入使用）
+        const exemplarStage = (stageKey) => {
+            const base = emptyStage(stageKey);
+            const ex = EXEMPLAR[stageKey] || {};
+            const out = { ...base };
+            Object.keys(base).forEach(k => {
+                if (ex[k] == null) return;
+                out[k] = Array.isArray(base[k]) ? (Array.isArray(ex[k]) ? ex[k].map(r => ({ ...r })) : base[k]) : ex[k];
+            });
+            return out;
+        };
+        const exemplarAddie = () => {
+            const a = {};
+            ADDIE_STAGE_KEYS.forEach(k => { a[k] = exemplarStage(k); });
+            return a;
+        };
+
+        // 相容化：舊版存檔 addie[stage] 為字串 → 轉為結構物件（字串併入 narrative）；
+        // 並補齊缺漏之欄位／對照表，確保 GAS 載入之舊資料可正常 round-trip。
+        const normalizeAddie = (addie) => {
+            const base = emptyAddie();
+            if (!addie || typeof addie !== 'object') return base;
+            ADDIE_STAGE_KEYS.forEach(stage => {
+                const v = addie[stage];
+                if (typeof v === 'string') {
+                    base[stage] = { ...base[stage], narrative: v };
+                } else if (v && typeof v === 'object') {
+                    const merged = { ...base[stage] };
+                    Object.keys(base[stage]).forEach(k => {
+                        if (v[k] == null) return;
+                        if (Array.isArray(base[stage][k])) { if (Array.isArray(v[k])) merged[k] = v[k]; }
+                        else merged[k] = v[k];
+                    });
+                    base[stage] = merged;
+                }
+            });
+            return base;
+        };
+
+        // 預設公版範例資料 (經紅、藍、標竿隊長聯合修改版；ADDIE 為標竿 100 分示範)
         const DEFAULT_DATA = {
             basicInfo: {
                 courseName: '外籍看護居家照顧華語溝通實務班', industry: '重點缺工產業-長照與跨國勞動力', level: '2', hours: 32,
@@ -111,13 +277,7 @@
                 benefits: '一、 對參訓學員：\n降低語言焦慮，提升在臺工作適應力。具備基礎照護華語能力，能正確執行指令，並強化緊急狀況應變能力，保障自身及被照顧者安全。\n\n二、 對雇主家庭：\n減少溝通不良產生之誤解。確保被照顧者之生理需求能被正確處理，提升居家照護品質，減輕家屬壓力。\n\n三、 對產業發展與社會：\n提供一套具國家公信力（iCAP 認證）之訓練模組。響應政府「留用優秀外國中階技術人力」政策，穩定長照人力供給，帶動整體產業服務品質升級。',
                 prerequisites: '1. 基本條件：已合法入臺，並從事家庭看護工作滿一個月以上者。\n2. 語言能力：具備基礎母語（印尼語或越南語）讀寫能力，無須具備華語基礎。\n3. 實務經驗：具備基礎居家照護經驗者。\n4. 報名管道：透過直聘中心、仲介公司推薦，或雇主同意放假參訓者優先錄取。',
             },
-            addie: {
-                analysis: '【痛點來源與驗證】配合「跨國勞動力精進方案」，本團隊發放 150 份雇主問卷，並召開產、官、學三方焦點小組會議。確立外籍看護核心痛點為「日常生理需求聽解」、「醫囑藥袋識別」與「緊急突發事件通報」三大任務。並經焦點小組指出，『文化適應』為語言溝通順暢之前提，故一併列為核心職能缺口。',
-                design: '【專家組成與課綱推導】邀請 3 位長照機構負責人(產業代表)、2 位移工語言培訓教授(教學專家)及 1 位臨床護理師(實務專家)召開 3 次設計會議。會中將分析階段之痛點轉化為 4 個教學單元。專家一致決議捨棄傳統筆試，全面改採「情境角色扮演(Role-Play)」推導出 10 項可觀察、可測量之外顯行為指標。',
-                development: '【教材與評量工具產出】\n1. 教材：發展《外籍看護居家照顧華語講義》及「台華語對照日常照護圖卡」，並導入數位化「線上情境聽力模擬音檔 (QR Code掃描即聽)」。\n2. 評量：針對單元二、三，由實務專家共同編製「119 緊急通報演練檢核表」與「藥袋識別實作檢核表 (Rubric 3點量表)」。',
-                implementation: '【試辦規劃與資源配置】規劃辦理 1 場次試辦教學，招收 20 名外籍看護。為確保實作品質，採小班制教學，並以 1:10 比例配置具備長照背景之「雙語助教(印尼/越南)」，確保學員在角色扮演演練時能獲得即時指導與安全防護。',
-                evaluation: '【雙軌評量機制設定】\nL1 反應評估：採中印/中越雙語對照之滿意度問卷，且規定整體滿意度須達 4.0 分(滿分5分)以上。\nL2 學習評估：結訓前須通過「藥袋辨識」與「119模擬報案」兩大情境實作。由兩位具備華語/長照雙重背景之評委，依據客觀檢核表給分，總分達 70 分以上始核發研習證明。',
-            },
+            addie: exemplarAddie(),
             syllabus: [
                 { unit: '單元一：居家生活與身體照顧溝通', hours: 10, method: '講述法、雙語圖卡配對、角色扮演', objective: '能使用基礎華語與受照顧者進行日常起居與餐飲餵食之互動溝通。', indicators: '1. 能正確聽懂並說出 15 種以上日常照顧動作中文(如:翻身、拍背、上廁所)。\n2. 能聽懂並正確執行受照顧者表達的立即性生理需求指令(如:口渴拿水、疼痛指認)。\n3. 能正確使用華語回答受照顧者關於飲食喜好與飽足感的提問。' },
                 { unit: '單元二：就醫配合與醫囑聽解', hours: 8, method: '講述法、實物展示(藥袋)、情境模擬', objective: '能聽懂醫院診間的基本護理衛教，並正確識別中文藥袋資訊。', indicators: '1. 能正確圈選/指出藥袋上「飯前、飯後、睡前」與「服藥劑量」等關鍵字。\n2. 能聽懂並正確操作護理人員指示之傷口照護動作(如:擦藥膏、貼紗布)。\n3. 能向雇主正確轉述(或利用圖卡指認)醫師診斷的主要病況(如:發燒、血壓高)。' },
@@ -249,7 +409,7 @@
         const jsonFieldsFromObj = (obj) => {
             const fields = [];
             const groupLabel = { basicInfo: '基本資訊', proposalDetails: '企劃內容', addie: 'ADDIE' };
-            ['basicInfo', 'proposalDetails', 'addie'].forEach(g => {
+            ['basicInfo', 'proposalDetails'].forEach(g => {
                 if (obj[g] && typeof obj[g] === 'object' && !Array.isArray(obj[g])) {
                     Object.keys(obj[g]).forEach(k => {
                         const v = obj[g][k];
@@ -258,6 +418,19 @@
                     });
                 }
             });
+            // ADDIE：階段值可能是舊版字串或新版結構物件
+            if (obj.addie && typeof obj.addie === 'object' && !Array.isArray(obj.addie)) {
+                Object.keys(obj.addie).forEach(k => {
+                    const v = obj.addie[k];
+                    const stageLabel = (ADDIE_SCHEMA[k] && ADDIE_SCHEMA[k].label) || k;
+                    if (typeof v === 'string') {
+                        fields.push({ key: 'addie.' + k, path: ['addie', k], label: 'ADDIE：' + stageLabel, value: v, chars: v.length, type: 'text' });
+                    } else if (v && typeof v === 'object') {
+                        const preview = String(v.narrative || JSON.stringify(v));
+                        fields.push({ key: 'addie.' + k, path: ['addie', k], label: 'ADDIE：' + stageLabel + '（結構化）', value: preview, chars: preview.length, type: 'addieStage', raw: v });
+                    }
+                });
+            }
             if (Array.isArray(obj.syllabus)) fields.push({ key: 'syllabus', path: ['syllabus'], label: '課程大綱 (syllabus)', value: JSON.stringify(obj.syllabus, null, 2), chars: obj.syllabus.length, type: 'array' });
             if (Array.isArray(obj.budgetItems)) fields.push({ key: 'budgetItems', path: ['budgetItems'], label: '經費項目 (budgetItems)', value: JSON.stringify(obj.budgetItems, null, 2), chars: obj.budgetItems.length, type: 'array' });
             return fields;
@@ -333,6 +506,24 @@
             if (!inc) return ex;
             return ex.trimEnd() + '\n\n' + inc;
         };
+
+        // 對應品質指標標籤（indicator id + 短標題），關鍵指標以紅點標示
+        const IndicatorTag = ({ id }) => {
+            const ind = RUBRIC_INDICATORS[id];
+            if (!ind) return null;
+            return (
+                <span title={ind.dim + '｜' + (ind.critical ? '關鍵指標' : '一般指標')} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 align-middle">
+                    <i className="fa-solid fa-tag text-[9px]"></i>
+                    對應：{ind.dim} 指標 {id}　{ind.title}
+                    {ind.critical && <span className="w-1.5 h-1.5 rounded-full bg-rose-500" title="關鍵指標"></span>}
+                </span>
+            );
+        };
+        const RequiredBadge = ({ required }) => (
+            required
+                ? <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">必填</span>
+                : <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-200">選填</span>
+        );
 
         const IcapGenerator = () => {
             const [activeTab, setActiveTab] = useState('basic');
@@ -433,11 +624,12 @@
             // 從雲端載入歷史版本
             const loadVersion = (version) => {
                 if (window.confirm(`確定要從雲端載入 [${version.name}] 嗎？這將覆蓋當前畫面。`)) {
-                    setBasicInfo(version.data.basicInfo);
-                    setProposalDetails(version.data.proposalDetails);
-                    setAddie(version.data.addie);
-                    setSyllabus(version.data.syllabus);
-                    setBudgetItems(version.data.budgetItems);
+                    const d = version.data || {};
+                    setBasicInfo(d.basicInfo || DEFAULT_DATA.basicInfo);
+                    setProposalDetails(d.proposalDetails || DEFAULT_DATA.proposalDetails);
+                    setAddie(normalizeAddie(d.addie)); // 相容舊版字串型 addie
+                    setSyllabus(Array.isArray(d.syllabus) ? d.syllabus : DEFAULT_DATA.syllabus);
+                    setBudgetItems(Array.isArray(d.budgetItems) ? d.budgetItems : DEFAULT_DATA.budgetItems);
                     setConnStatus({ loading: false, message: `已載入版本：${version.name}`, error: false });
                 }
             };
@@ -478,6 +670,94 @@
             const removeBudgetItem = (id) => setBudgetItems(budgetItems.filter(item => item.id !== id));
             const handleSyllabusChange = (index, field, value) => {
                 const updated = [...syllabus]; updated[index][field] = value; setSyllabus(updated);
+            };
+
+            // ---- ADDIE 結構化欄位／對照表編輯 ----
+            const setAddieField = (stage, key, value) => {
+                setAddie(prev => ({ ...prev, [stage]: { ...prev[stage], [key]: value } }));
+            };
+            const setAddieCell = (stage, tableKey, rowIdx, colKey, value) => {
+                setAddie(prev => {
+                    const rows = (prev[stage][tableKey] || []).map((r, i) => i === rowIdx ? { ...r, [colKey]: value } : r);
+                    return { ...prev, [stage]: { ...prev[stage], [tableKey]: rows } };
+                });
+            };
+            const addAddieRow = (stage, table) => {
+                setAddie(prev => {
+                    const row = {}; table.columns.forEach(c => { row[c.key] = ''; });
+                    return { ...prev, [stage]: { ...prev[stage], [table.key]: [...(prev[stage][table.key] || []), row] } };
+                });
+            };
+            const removeAddieRow = (stage, tableKey, rowIdx) => {
+                setAddie(prev => ({ ...prev, [stage]: { ...prev[stage], [tableKey]: (prev[stage][tableKey] || []).filter((_, i) => i !== rowIdx) } }));
+            };
+
+            // 某對照表是否已填（至少一列、且該列任一欄有值）
+            const tableFilled = (rows) => Array.isArray(rows) && rows.some(r => Object.values(r).some(v => String(v || '').trim()));
+
+            // 單一階段完成度：必填欄位 + 必填對照表（分母僅計必填項）
+            const stageCompleteness = (stageKey) => {
+                const schema = ADDIE_SCHEMA[stageKey];
+                const st = addie[stageKey] || emptyStage(stageKey);
+                let total = 0, filled = 0; const missing = [];
+                schema.fields.forEach(f => {
+                    if (!f.required) return;
+                    total += 1;
+                    if (String(st[f.key] || '').trim()) filled += 1; else missing.push(f.label);
+                });
+                schema.tables.forEach(t => {
+                    if (!t.required) return;
+                    total += 1;
+                    if (tableFilled(st[t.key])) filled += 1; else missing.push(t.label);
+                });
+                return { total, filled, pct: total ? Math.round(filled / total * 100) : 100, missing };
+            };
+            const overallCompleteness = useMemo(() => {
+                let total = 0, filled = 0;
+                ADDIE_STAGE_KEYS.forEach(k => { const c = stageCompleteness(k); total += c.total; filled += c.filled; });
+                return { total, filled, pct: total ? Math.round(filled / total * 100) : 100 };
+            }, [addie]);
+
+            // 實施排程總時數（呼應指標 I-3：課程總時數 ≥ 12 小時）
+            const scheduleHours = useMemo(() => {
+                const rows = (addie.implementation && addie.implementation.scheduleTable) || [];
+                return rows.reduce((s, r) => s + (Number(String(r.hours).replace(/[^0-9.]/g, '')) || 0), 0);
+            }, [addie]);
+
+            // 標竿範例：可展開的欄位／階段面板開關
+            const [benchmarkOpen, setBenchmarkOpen] = useState({});
+            const toggleBenchmark = (id) => setBenchmarkOpen(prev => ({ ...prev, [id]: !prev[id] }));
+            const hasExemplar = Object.keys(EXEMPLAR).length > 0;
+
+            // 一鍵填入標竿範例（非破壞性：預設只填空白欄位；若已有內容詢問是否覆蓋）
+            const fillBenchmark = () => {
+                if (!hasExemplar) { alert('找不到標竿範例資料（exemplar.js 未載入）。'); return; }
+                const hasAny = ADDIE_STAGE_KEYS.some(k => {
+                    const st = addie[k] || {};
+                    return Object.keys(st).some(f => Array.isArray(st[f]) ? tableFilled(st[f]) : String(st[f] || '').trim());
+                });
+                let overwrite = false;
+                if (hasAny) {
+                    overwrite = window.confirm('目前 ADDIE 已有內容。\n\n按「確定」＝以標竿範例「覆蓋」全部 ADDIE 欄位；\n按「取消」＝僅填入目前「空白」的欄位（保留你已寫的內容）。');
+                }
+                setAddie(prev => {
+                    const next = { ...prev };
+                    ADDIE_STAGE_KEYS.forEach(stage => {
+                        const ex = exemplarStage(stage);
+                        const cur = { ...(prev[stage] || emptyStage(stage)) };
+                        Object.keys(ex).forEach(field => {
+                            if (Array.isArray(ex[field])) {
+                                const curFilled = tableFilled(cur[field]);
+                                if (overwrite || !curFilled) cur[field] = ex[field].map(r => ({ ...r }));
+                            } else {
+                                if (overwrite || !String(cur[field] || '').trim()) cur[field] = ex[field];
+                            }
+                        });
+                        next[stage] = cur;
+                    });
+                    return next;
+                });
+                setConnStatus({ loading: false, message: '已填入「標竿 100 分範例」（' + (overwrite ? '覆蓋模式' : '僅補空白') + '）。此為示範內容，請依貴案實況修改後再儲存。', error: false });
             };
 
             // 匯入補充資料：載入檔案（支援一次選取多個檔案，例如 ADDIE 五階段各一檔）
@@ -531,21 +811,39 @@
                 if (!parseResult) return;
                 const mode = importMode;
                 const chosen = parseResult.fields.filter(f => importSelected[f.key] !== false);
-                const upd = { basicInfo: {}, proposalDetails: {}, addie: {}, syllabus: null, budgetItems: null };
+                const upd = { basicInfo: {}, proposalDetails: {}, addie: {}, addieStages: {}, syllabus: null, budgetItems: null };
                 chosen.forEach(f => {
                     if (f.type === 'array') {
                         if (f.path[0] === 'syllabus' && parseResult.json) upd.syllabus = parseResult.json.syllabus;
                         if (f.path[0] === 'budgetItems' && parseResult.json) upd.budgetItems = parseResult.json.budgetItems;
                         return;
                     }
+                    if (f.type === 'addieStage') { upd.addieStages[f.path[1]] = f.raw; return; }
                     const [group, key] = f.path;
+                    if (group === 'addie') { upd.addie[key] = f.value; return; } // 文字 → 併入該階段 narrative
                     if (upd[group]) upd[group][key] = f.value;
                 });
 
-                if (Object.keys(upd.addie).length) {
+                if (Object.keys(upd.addie).length || Object.keys(upd.addieStages).length) {
                     setAddie(prev => {
                         const next = { ...prev };
-                        Object.keys(upd.addie).forEach(k => { next[k] = mergeText(prev[k], upd.addie[k], mode); });
+                        // 純文字階段：併入 narrative（保留既有結構化欄位）
+                        Object.keys(upd.addie).forEach(k => {
+                            const stage = { ...(next[k] || emptyStage(k)) };
+                            stage.narrative = mergeText(stage.narrative, upd.addie[k], mode);
+                            next[k] = stage;
+                        });
+                        // 結構化階段（來自符合資料模型的 JSON）：逐欄位合併
+                        Object.keys(upd.addieStages).forEach(k => {
+                            const raw = upd.addieStages[k] || {};
+                            const stage = { ...(next[k] || emptyStage(k)) };
+                            Object.keys(stage).forEach(field => {
+                                if (raw[field] == null) return;
+                                if (Array.isArray(stage[field])) { if (Array.isArray(raw[field])) stage[field] = raw[field]; }
+                                else stage[field] = mergeText(stage[field], raw[field], mode);
+                            });
+                            next[k] = stage;
+                        });
                         return next;
                     });
                 }
@@ -686,23 +984,136 @@
                                 </div>
                                 )}
 
-                                {/* Tab 2: ADDIE */}
+                                {/* Tab 2: ADDIE（精靈式引導 + 品質指標標註 + 標竿範例） */}
                                 {activeTab === 'addie' && (
                                 <div className="space-y-6 animate-in fade-in">
-                                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-900 text-sm mb-6"><i className="fa-solid fa-triangle-exclamation text-xl shrink-0 mt-0.5 text-amber-600"></i><div><strong>iCAP 審查退件最高雷區：</strong><ul className="list-disc pl-5 mt-1 space-y-1 text-amber-800"><li>分析 (A) 指出的痛點，必須在設計 (D) 階段轉換為課綱單元。</li><li>評估 (E) 階段必須有客觀檢核表 (Checklist) 作為證據。</li></ul></div></div>
-                                    {[
-                                    { key: 'analysis', label: '1. 分析階段 (Analysis)', desc: '詳細交代來源、問卷、產業專家焦點小組會議之數據。' },
-                                    { key: 'design', label: '2. 設計階段 (Design)', desc: '記錄三類專家決議，推導出各單元大綱與具體評量方法。' },
-                                    { key: 'development', label: '3. 發展階段 (Development)', desc: '說明講義、圖卡、多媒體影音之編撰過程，與實作評量檢核表的制定。' },
-                                    { key: 'implementation', label: '4. 實施階段 (Implementation)', desc: '交代試辦班次規模、受訓人數限制、雙語助教配置。' },
-                                    { key: 'evaluation', label: '5. 評估階段 (Evaluation)', desc: '制定評估門檻（如 L2 實作考驗 70 分及格）。' },
-                                    ].map((item) => (
-                                    <div key={item.key} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                                        <label className="block text-sm font-bold text-gray-800">{item.label}</label>
-                                        <p className="text-xs text-gray-500">{item.desc}</p>
-                                        <textarea rows={4} value={addie[item.key]} onChange={e => setAddie({...addie, [item.key]: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" />
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-indigo-50 to-white border border-indigo-200 rounded-xl p-5">
+                                        <div>
+                                            <h2 className="text-lg font-black text-gray-800 flex items-center gap-2"><i className="fa-solid fa-wand-magic-sparkles text-indigo-600"></i> ADDIE 精靈式引導（對照品質評分指標）</h2>
+                                            <p className="text-xs text-gray-500 mt-1 leading-relaxed">逐欄位填寫，欄名旁標籤即為對應之<strong>職能導向課程品質認證審查指標</strong>；完成全部<span className="text-rose-600 font-bold">必填</span>項目即邁向「100 分」通過標準。點各欄「查看標竿範例」可展開標竿隊長示範。</p>
+                                        </div>
+                                        <div className="flex items-center gap-4 shrink-0">
+                                            <div className="text-center px-3">
+                                                <div className={`text-3xl font-black ${overallCompleteness.pct === 100 ? 'text-emerald-600' : 'text-indigo-700'}`}>{overallCompleteness.pct}<span className="text-lg">分</span></div>
+                                                <div className="text-[11px] text-gray-500">必填完成度 {overallCompleteness.filled}/{overallCompleteness.total}</div>
+                                            </div>
+                                            {hasExemplar && (
+                                            <button onClick={fillBenchmark} className="text-sm font-bold px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition flex items-center gap-2">
+                                                <i className="fa-solid fa-star"></i> 一鍵填入標竿範例
+                                            </button>
+                                            )}
+                                        </div>
                                     </div>
-                                    ))}
+
+                                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-900 text-sm"><i className="fa-solid fa-triangle-exclamation text-xl shrink-0 mt-0.5 text-amber-600"></i><div><strong>iCAP 審查退件最高雷區：</strong><ul className="list-disc pl-5 mt-1 space-y-1 text-amber-800"><li>分析 (A) 指出的痛點，必須在設計 (D) 階段轉換為課綱單元（指標 A-3 / D-2）。</li><li>評估 (E) 階段必須有客觀檢核表 (Rubric) 作為證據（指標 E-1 / E-2）。</li><li>關鍵指標（標籤末端紅點）任一未達即高風險補正，務必補齊。</li></ul></div></div>
+
+                                    {ADDIE_STAGE_KEYS.map(stageKey => {
+                                        const schema = ADDIE_SCHEMA[stageKey];
+                                        const st = addie[stageKey] || emptyStage(stageKey);
+                                        const comp = stageCompleteness(stageKey);
+                                        const ex = EXEMPLAR[stageKey] || {};
+                                        return (
+                                        <div key={stageKey} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                                            <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-200 gap-4">
+                                                <div className="min-w-0">
+                                                    <h3 className="font-bold text-gray-800">{schema.label}</h3>
+                                                    <p className="text-xs text-gray-500 truncate">{schema.desc}</p>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden"><div style={{ width: comp.pct + '%' }} className={`h-full transition-all ${comp.pct === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}></div></div>
+                                                    <span className={`text-xs font-bold ${comp.pct === 100 ? 'text-emerald-600' : 'text-gray-500'}`}>{comp.filled}/{comp.total}</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="p-5 space-y-5">
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                        <label className="text-sm font-bold text-gray-700">階段總述（Overview）</label>
+                                                        <RequiredBadge required={false} />
+                                                    </div>
+                                                    <textarea rows={3} value={st.narrative || ''} onChange={e => setAddieField(stageKey, 'narrative', e.target.value)} className="w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="以 2–3 句話總述本階段重點（選填，將呈現於計畫書該階段開頭）。" />
+                                                </div>
+
+                                                {schema.fields.map(f => {
+                                                    const bid = stageKey + '.' + f.key;
+                                                    return (
+                                                    <div key={f.key}>
+                                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                            <label className="text-sm font-bold text-gray-700">{f.label}</label>
+                                                            <RequiredBadge required={f.required} />
+                                                            <IndicatorTag id={f.indicator} />
+                                                            {ex[f.key] && <button onClick={() => toggleBenchmark(bid)} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"><i className="fa-solid fa-eye text-[9px] mr-1"></i>{benchmarkOpen[bid] ? '收合範例' : '查看標竿範例'}</button>}
+                                                        </div>
+                                                        <p className="text-xs text-gray-400 mb-1.5 leading-relaxed"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>{f.hint}</p>
+                                                        <textarea rows={f.rows} value={st[f.key] || ''} onChange={e => setAddieField(stageKey, f.key, e.target.value)} className={`w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-500 outline-none ${f.required && !String(st[f.key] || '').trim() ? 'border-rose-200' : ''}`} />
+                                                        {benchmarkOpen[bid] && ex[f.key] && (
+                                                        <div className="mt-2 border border-emerald-200 bg-emerald-50/60 rounded-lg p-3">
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <span className="text-xs font-bold text-emerald-800"><i className="fa-solid fa-user-tie mr-1"></i>標竿隊長示範（100 分範例）</span>
+                                                                <button onClick={() => setAddieField(stageKey, f.key, ex[f.key])} className="text-[11px] font-bold px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white transition">填入此欄</button>
+                                                            </div>
+                                                            <p className="text-xs text-emerald-900/90 whitespace-pre-line leading-relaxed">{ex[f.key]}</p>
+                                                        </div>
+                                                        )}
+                                                    </div>
+                                                    );
+                                                })}
+
+                                                {schema.tables.map(t => {
+                                                    const bid = stageKey + '.' + t.key;
+                                                    const rows = st[t.key] || [];
+                                                    const hasExTable = Array.isArray(ex[t.key]) && ex[t.key].length > 0;
+                                                    return (
+                                                    <div key={t.key}>
+                                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                            <label className="text-sm font-bold text-gray-700"><i className="fa-solid fa-table-cells text-gray-400 mr-1"></i>{t.label}</label>
+                                                            <RequiredBadge required={t.required} />
+                                                            <IndicatorTag id={t.indicator} />
+                                                            {hasExTable && <button onClick={() => toggleBenchmark(bid)} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"><i className="fa-solid fa-eye text-[9px] mr-1"></i>{benchmarkOpen[bid] ? '收合範例' : '查看標竿範例'}</button>}
+                                                        </div>
+                                                        <p className="text-xs text-gray-400 mb-1.5 leading-relaxed"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>{t.hint}</p>
+                                                        {stageKey === 'implementation' && t.key === 'scheduleTable' && (
+                                                        <div className={`text-xs font-semibold mb-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${scheduleHours >= 12 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                                                            <i className={`fa-solid ${scheduleHours >= 12 ? 'fa-circle-check' : 'fa-triangle-exclamation'}`}></i>排程總時數：{scheduleHours} 小時（指標 I-3 要求 ≥ 12 小時）
+                                                        </div>
+                                                        )}
+                                                        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                                                            <table className="w-full text-sm bg-white">
+                                                                <thead className="bg-gray-100"><tr>{t.columns.map(c => <th key={c.key} className="p-2 text-left text-xs font-bold text-gray-600 whitespace-nowrap">{c.label}</th>)}<th className="p-2 w-10"></th></tr></thead>
+                                                                <tbody>
+                                                                    {rows.length === 0 ? (
+                                                                        <tr><td colSpan={t.columns.length + 1} className="p-3 text-center text-xs text-gray-400 italic">尚無資料，點下方「新增列」開始填寫。</td></tr>
+                                                                    ) : rows.map((row, ri) => (
+                                                                        <tr key={ri} className="border-t border-gray-100">
+                                                                            {t.columns.map(c => <td key={c.key} className="p-1.5"><input type="text" value={row[c.key] || ''} onChange={e => setAddieCell(stageKey, t.key, ri, c.key, e.target.value)} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" /></td>)}
+                                                                            <td className="p-1.5 text-center"><button onClick={() => removeAddieRow(stageKey, t.key, ri)} className="text-red-400 hover:text-red-600 p-1"><i className="fa-solid fa-trash-can"></i></button></td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                        <button onClick={() => addAddieRow(stageKey, t)} className="mt-2 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition"><i className="fa-solid fa-plus mr-1"></i>新增列</button>
+                                                        {benchmarkOpen[bid] && hasExTable && (
+                                                        <div className="mt-2 border border-emerald-200 bg-emerald-50/60 rounded-lg p-3">
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <span className="text-xs font-bold text-emerald-800"><i className="fa-solid fa-user-tie mr-1"></i>標竿隊長示範對照表</span>
+                                                                <button onClick={() => setAddieField(stageKey, t.key, ex[t.key].map(r => ({ ...r })))} className="text-[11px] font-bold px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white transition">填入此表</button>
+                                                            </div>
+                                                            <div className="overflow-x-auto">
+                                                                <table className="w-full text-xs border border-emerald-200 bg-white/70">
+                                                                    <thead className="bg-emerald-100/60"><tr>{t.columns.map(c => <th key={c.key} className="p-1.5 text-left font-bold text-emerald-800 whitespace-nowrap">{c.label}</th>)}</tr></thead>
+                                                                    <tbody>{ex[t.key].map((row, ri) => <tr key={ri} className="border-t border-emerald-100">{t.columns.map(c => <td key={c.key} className="p-1.5 text-emerald-900/90">{row[c.key]}</td>)}</tr>)}</tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                        )}
+                                                    </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                        );
+                                    })}
                                 </div>
                                 )}
 
@@ -862,30 +1273,38 @@
                                         </table>
                                     </section>
 
-                                    {/* 第三章：ADDIE 發展歷程 */}
+                                    {/* 第三章：ADDIE 發展歷程（結構化欄位 + 對照表） */}
                                     <section className="print-page-break">
                                         <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">參、 職能分析與課程發展歷程 (ADDIE)</h2>
-                                        <div className="space-y-6 leading-8 text-justify text-[15px]">
-                                            <div>
-                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">一、 分析階段 (Analysis)</h3>
-                                                <p className="indent-8">{addie.analysis}</p>
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">二、 設計階段 (Design)</h3>
-                                                <p className="indent-8">{addie.design}</p>
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">三、 發展階段 (Development)</h3>
-                                                <p className="indent-8">{addie.development}</p>
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">四、 實施階段 (Implementation)</h3>
-                                                <p className="indent-8">{addie.implementation}</p>
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-lg">五、 評估階段 (Evaluation)</h3>
-                                                <p className="indent-8">{addie.evaluation}</p>
-                                            </div>
+                                        <div className="space-y-8 leading-8 text-justify text-[15px]">
+                                            {ADDIE_STAGE_KEYS.map((stageKey, si) => {
+                                                const schema = ADDIE_SCHEMA[stageKey];
+                                                const st = addie[stageKey] || {};
+                                                const cn = ['一', '二', '三', '四', '五'][si];
+                                                return (
+                                                <div key={stageKey}>
+                                                    <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-3 text-lg">{cn}、 {schema.label.replace(/^\d+\.\s*/, '')}</h3>
+                                                    {st.narrative && <p className="indent-8 mb-3 whitespace-pre-line">{st.narrative}</p>}
+                                                    <div className="space-y-3">
+                                                        {schema.fields.map(f => (String(st[f.key] || '').trim() ? (
+                                                        <div key={f.key}>
+                                                            <p className="font-bold text-gray-800">◆ {f.label}<span className="text-[12px] font-normal text-gray-400 ml-2">（對應指標 {f.indicator}）</span></p>
+                                                            <p className="indent-8 whitespace-pre-line">{st[f.key]}</p>
+                                                        </div>
+                                                        ) : null))}
+                                                        {schema.tables.map(t => (Array.isArray(st[t.key]) && st[t.key].some(r => Object.values(r).some(v => String(v || '').trim())) ? (
+                                                        <div key={t.key} className="pt-1">
+                                                            <p className="font-bold text-gray-800 mb-2">◆ {t.label}<span className="text-[12px] font-normal text-gray-400 ml-2">（對應指標 {t.indicator}）</span></p>
+                                                            <table className="w-full border-collapse border border-gray-500 text-[14px]">
+                                                                <thead className="bg-gray-100"><tr>{t.columns.map(c => <th key={c.key} className="border border-gray-500 p-2 text-center font-bold">{c.label}</th>)}</tr></thead>
+                                                                <tbody>{st[t.key].map((row, ri) => <tr key={ri}>{t.columns.map(c => <td key={c.key} className="border border-gray-500 p-2 align-top whitespace-pre-line">{row[c.key]}</td>)}</tr>)}</tbody>
+                                                            </table>
+                                                        </div>
+                                                        ) : null))}
+                                                    </div>
+                                                </div>
+                                                );
+                                            })}
                                         </div>
                                     </section>
 
