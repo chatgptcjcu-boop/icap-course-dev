@@ -158,6 +158,41 @@
             { key: 'proposalDetails.prerequisites', path: ['proposalDetails', 'prerequisites'], label: '企劃：參訓先備條件', test: (h) => /(先備條件|報名資格|參訓資格)/.test(h) },
         ];
 
+        // ADDIE 五階段對照表：供「單檔＝單一階段」與檔名判斷使用
+        // 順序即為判斷優先序（先比對到者為準）。
+        const ADDIE_STAGE_TARGETS = [
+            { stage: 'analysis',       path: ['addie', 'analysis'],       label: 'ADDIE：分析階段 (Analysis)',       nameRe: /(分析|analysis)/i,       headRe: /(分析階段|Analysis)/i },
+            { stage: 'design',         path: ['addie', 'design'],         label: 'ADDIE：設計階段 (Design)',         nameRe: /(設計|design)/i,         headRe: /(設計階段|Design)/i },
+            { stage: 'development',    path: ['addie', 'development'],     label: 'ADDIE：發展階段 (Development)',     nameRe: /(發展|development)/i,    headRe: /(發展階段|Development)/i },
+            { stage: 'implementation', path: ['addie', 'implementation'], label: 'ADDIE：實施階段 (Implementation)', nameRe: /(實施|implementation)/i, headRe: /(實施階段|Implementation)/i },
+            { stage: 'evaluation',     path: ['addie', 'evaluation'],     label: 'ADDIE：評估階段 (Evaluation)',     nameRe: /(評估|evaluation)/i,     headRe: /(評估階段|Evaluation)/i },
+        ];
+
+        // 依上傳檔名判斷 ADDIE 階段（容忍數字前綴／底線，如 1_分析階段_Analysis.txt）
+        const detectStageFromName = (fileName) => {
+            if (!fileName) return null;
+            const base = String(fileName).replace(/\.[^.]+$/, ''); // 去副檔名
+            return ADDIE_STAGE_TARGETS.find(t => t.nameRe.test(base)) || null;
+        };
+
+        // 依內容開頭（前若干行）判斷 ADDIE 階段：僅比對明確的「X階段 / English」字樣，避免誤判
+        const detectStageFromContent = (raw) => {
+            const head = String(raw).replace(/\r\n/g, '\n').split('\n').slice(0, 25).join('\n');
+            return ADDIE_STAGE_TARGETS.find(t => t.headRe.test(head)) || null;
+        };
+
+        // 清理純文字內容：移除程式碼圍籬與分隔線，壓縮多餘空行
+        const cleanPlainContent = (raw) => {
+            const out = [];
+            for (const line of String(raw).replace(/\r\n/g, '\n').split('\n')) {
+                const t = line.trimEnd();
+                if (/^\s*```/.test(t)) continue;            // 程式碼圍籬（含 ```eof）
+                if (/^\s*-{3,}\s*$/.test(t)) continue;       // 分隔線
+                out.push(line);
+            }
+            return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        };
+
         // 解析純文字 / Markdown：依標題切段，對應到本案欄位
         const parseSupplementaryText = (raw) => {
             const lines = String(raw).replace(/\r\n/g, '\n').split('\n');
@@ -229,7 +264,8 @@
         };
 
         // 主解析入口：先試 JSON，失敗再走文字 / Markdown
-        const parseSupplementary = (raw) => {
+        // fileName（可選）：用於「單檔＝單一 ADDIE 階段」的檔名判斷。
+        const parseSupplementary = (raw, fileName) => {
             const text = String(raw).trim();
             let jsonText = text;
             const fenceJson = text.match(/```json\s*([\s\S]*?)```/i);
@@ -243,6 +279,48 @@
                 } catch (e) { /* 非合法 JSON，改走文字解析 */ }
             }
             const { fields, unmapped } = parseSupplementaryText(text);
+            // 若有標題可對應（舊版單檔多段格式）→ 沿用既有結果
+            if (fields.length > 0) return { isJson: false, json: null, fields, unmapped };
+
+            // 沒有任何可對應標題：嘗試「整份檔案 ＝ 單一 ADDIE 階段」
+            // 判斷優先序：檔名 → 內容開頭字樣
+            const stage = detectStageFromName(fileName) || detectStageFromContent(text);
+            if (stage) {
+                const value = cleanPlainContent(text);
+                if (value.length > 0) {
+                    return {
+                        isJson: false, json: null,
+                        fields: [{ key: stage.path.join('.'), path: stage.path, label: stage.label, value, chars: value.length, type: 'text' }],
+                        unmapped: '',
+                    };
+                }
+            }
+            return { isJson: false, json: null, fields, unmapped };
+        };
+
+        // 多檔匯入：逐檔以檔名判斷 ADDIE 階段後合併；同一階段內容自動接續（append）
+        const parseSupplementaryFiles = (files) => {
+            const byKey = {};      // key -> field
+            const order = [];      // 保留出現順序
+            const unmappedParts = [];
+            (files || []).forEach(f => {
+                const r = parseSupplementary(f.text, f.name);
+                if (r.fields && r.fields.length) {
+                    r.fields.forEach(fld => {
+                        if (fld.type !== 'text') return; // 多檔匯入僅處理文字欄位
+                        if (byKey[fld.key]) {
+                            byKey[fld.key].value = (byKey[fld.key].value + '\n\n' + fld.value).trim();
+                            byKey[fld.key].chars = byKey[fld.key].value.length;
+                        } else {
+                            byKey[fld.key] = { ...fld };
+                            order.push(fld.key);
+                        }
+                    });
+                }
+                if (r.unmapped) unmappedParts.push('【' + (f.name || '未命名檔案') + '】\n' + r.unmapped);
+            });
+            const fields = order.map(k => byKey[k]);
+            const unmapped = unmappedParts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
             return { isJson: false, json: null, fields, unmapped };
         };
 
@@ -271,6 +349,7 @@
             const [showImport, setShowImport] = useState(false);
             const [importText, setImportText] = useState('');
             const [importFileName, setImportFileName] = useState('');
+            const [importFiles, setImportFiles] = useState([]); // 多檔匯入：[{ name, text }]
             const [importMode, setImportMode] = useState('append'); // append | replace
             const [parseResult, setParseResult] = useState(null);
             const [importSelected, setImportSelected] = useState({});
@@ -401,26 +480,44 @@
                 const updated = [...syllabus]; updated[index][field] = value; setSyllabus(updated);
             };
 
-            // 匯入補充資料：載入檔案
+            // 匯入補充資料：載入檔案（支援一次選取多個檔案，例如 ADDIE 五階段各一檔）
             const handleImportFile = (e) => {
-                const file = e.target.files && e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    setImportText(String(ev.target.result || ''));
-                    setImportFileName(file.name);
+                const files = Array.from(e.target.files || []);
+                if (!files.length) return;
+                Promise.all(files.map(file => new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => resolve({ name: file.name, text: String(ev.target.result || '') });
+                    reader.readAsText(file, 'utf-8');
+                }))).then(loaded => {
+                    setImportFiles(loaded);
+                    // 單檔時同步顯示於文字框，方便微調；多檔時清空文字框改走檔案解析
+                    if (loaded.length === 1) setImportText(loaded[0].text);
+                    else setImportText('');
+                    setImportFileName(loaded.map(f => f.name).join('、'));
                     setParseResult(null);
-                };
-                reader.readAsText(file, 'utf-8');
+                });
+                e.target.value = ''; // 允許重複選取相同檔案
             };
 
             // 匯入補充資料：解析並預覽
             const handleParseImport = () => {
-                const text = importText.trim();
-                if (!text) { alert('請先貼上或上傳補充資料內容。'); return; }
-                const result = parseSupplementary(text);
+                let result;
+                if (importFiles.length > 1) {
+                    // 多檔：逐檔以檔名判斷階段後合併
+                    result = parseSupplementaryFiles(importFiles);
+                } else if (importFiles.length === 1) {
+                    // 單檔：以（可能微調過的）文字內容 + 檔名判斷階段
+                    const text = (importText.trim() || importFiles[0].text);
+                    if (!text) { alert('請先貼上或上傳補充資料內容。'); return; }
+                    result = parseSupplementary(text, importFiles[0].name);
+                } else {
+                    // 純貼上：無檔名，靠內容標題／開頭字樣判斷
+                    const text = importText.trim();
+                    if (!text) { alert('請先貼上或上傳補充資料內容。'); return; }
+                    result = parseSupplementary(text, importFileName);
+                }
                 if (result.fields.length === 0 && !result.unmapped) {
-                    alert('無法從內容中辨識出可對應的段落，請確認格式（建議含「分析階段」等標題，或提供符合資料模型的 JSON）。');
+                    alert('無法從內容中辨識出可對應的段落，請確認格式（建議含「分析階段」等標題、以階段命名的檔案，或提供符合資料模型的 JSON）。');
                 }
                 const sel = {};
                 result.fields.forEach(f => { sel[f.key] = true; });
@@ -475,6 +572,7 @@
                 setParseResult(null);
                 setImportText('');
                 setImportFileName('');
+                setImportFiles([]);
                 setConnStatus({ loading: false, message: `已匯入 ${count} 項補充資料至本案（尚未儲存）。請確認內容後於上方「寫入資料庫」同步至 Google Sheet。`, error: false });
             };
 
@@ -883,18 +981,31 @@
                             </div>
                             <div className="p-5 space-y-4">
                                 <p className="text-sm text-gray-500 leading-relaxed">
-                                    貼上 AI（Gemini／ChatGPT）產生的補充內容，或上傳 <span className="font-mono text-xs bg-gray-100 px-1 rounded">.txt / .md / .json</span> 檔。
+                                    貼上 AI（Gemini／ChatGPT）產生的補充內容，或上傳 <span className="font-mono text-xs bg-gray-100 px-1 rounded">.txt / .md / .json</span> 檔（可一次多選）。
                                     系統會嘗試把「ADDIE 五階段（分析／設計／發展／實施／評估）」與企劃章節對應到<strong>本案</strong>欄位；
+                                    <strong>若整份檔案即為單一階段</strong>（例如 <span className="font-mono text-xs bg-gray-100 px-1 rounded">1_分析階段_Analysis.txt</span>），會依<strong>檔名</strong>自動判斷並整檔對應。
                                     無法對應的內容不會遺失，會保留供你選擇附加。匯入採合併方式，套用前可先預覽並勾選。
                                 </p>
                                 <div className="flex flex-wrap items-center gap-3">
                                     <label className="inline-flex items-center gap-2 text-sm font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 cursor-pointer hover:bg-purple-100 transition">
-                                        <i className="fa-solid fa-upload"></i> 上傳檔案
-                                        <input type="file" accept=".txt,.md,.markdown,.json" onChange={handleImportFile} className="hidden" />
+                                        <i className="fa-solid fa-upload"></i> 上傳檔案（可多選）
+                                        <input type="file" accept=".txt,.md,.markdown,.json" multiple onChange={handleImportFile} className="hidden" />
                                     </label>
-                                    {importFileName && <span className="text-xs text-gray-500 truncate">已載入：{importFileName}</span>}
+                                    {importFileName && <span className="text-xs text-gray-500 truncate">已載入：{importFileName}{importFiles.length > 1 ? `（共 ${importFiles.length} 檔）` : ''}</span>}
                                 </div>
+                                {importFiles.length > 1 ? (
+                                    <div className="text-xs text-gray-500 bg-gray-50 border rounded-lg p-3 leading-relaxed">
+                                        已載入 {importFiles.length} 個檔案，將依<strong>檔名</strong>自動判斷 ADDIE 階段並各自對應：
+                                        <div className="mt-1 space-y-0.5">
+                                            {importFiles.map((f, i) => {
+                                                const st = detectStageFromName(f.name);
+                                                return <div key={i} className="font-mono">• {f.name} → {st ? st.label : '（無法由檔名判斷，將依內容解析）'}</div>;
+                                            })}
+                                        </div>
+                                    </div>
+                                ) : (
                                 <textarea rows={8} value={importText} onChange={e => { setImportText(e.target.value); setParseResult(null); }} placeholder="在此貼上 Gemini / ChatGPT 產生的內容（Markdown 段落或符合資料模型的 JSON 皆可）..." className="w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-purple-500 outline-none custom-scrollbar" />
+                                )}
                                 <div className="flex flex-wrap gap-4 items-center">
                                     <button onClick={handleParseImport} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-lg transition"><i className="fa-solid fa-magnifying-glass mr-1"></i> 解析預覽</button>
                                     <div className="flex items-center gap-3 text-sm text-gray-600">
