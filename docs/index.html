@@ -21,15 +21,16 @@
 
     <section class="bg-white rounded-2xl shadow-sm p-8 border border-gray-200">
       <h2 class="text-xl font-bold mb-4 flex items-center gap-2"><i class="fa-solid fa-folder-open text-amber-500"></i> 現有專案</h2>
+      <p class="text-xs text-gray-500 mb-4">說明：GitHub Pages 僅發佈 <code>/docs</code>，各專案的 <code>index.html</code> 以「本機開啟」為主（或 <code>bash scripts/new-project.sh</code> 後於本機檢視）。下列卡片連往 GitHub 專案資料夾以便瀏覽。</p>
       <div class="grid gap-4 md:grid-cols-2">
 
-        <a href="../projects/example-course/index.html" class="block p-5 rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md transition group">
+        <a href="https://github.com/chatgptcjcu-boop/icap-course-dev/tree/main/projects/example-course" class="block p-5 rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md transition group">
           <div class="font-bold text-lg group-hover:text-blue-700">範例課程（示範專案）</div>
           <div class="text-sm text-gray-500 mt-1"><code>projects/example-course/</code></div>
           <div class="text-xs text-amber-600 mt-2"><i class="fa-solid fa-triangle-exclamation"></i> 使用佔位 GAS 網址，僅供介面示範</div>
         </a>
 
-        <!-- 新增專案後，於此複製一個卡片，將 href 指向 ../projects/<slug>/index.html -->
+        <!-- 新增專案後，於此複製一張卡片，href 指向該專案（本機請開 projects/<slug>/index.html；線上請用 GitHub 路徑 tree/main/projects/<slug>） -->
 
       </div>
     </section>
