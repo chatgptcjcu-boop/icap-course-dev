@@ -62,19 +62,41 @@
             || DEFAULT_GAS_API_URL;
 
         // 直接連線 GAS 的共用請求函式（統一走 text/plain 降低 CORS 預檢）
+        // 錯誤分類：權限未開放 / 缺 doPost（部署過舊）/ 跨來源(file://) / 一般錯誤
         const callGas = (payload) =>
             fetch(GAS_API_URL, {
                 method: 'POST',
                 body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                redirect: 'follow'
             })
             .then(res => {
                 if (!res.ok) throw new Error('API 連線失敗 (HTTP ' + res.status + ')');
-                return res.json();
+                return res.text();
             })
-            .then(data => {
+            .then(text => {
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    // 後端回傳非 JSON：多半是 GAS 錯誤頁（缺 doPost / 部署版本過舊）或登入頁（權限非「任何人」）
+                    if (/doPost|指令碼函式/.test(text)) {
+                        throw new Error('後端缺少 doPost 或部署版本過舊：請把最新的 template/gas/Code.gs 貼到 Apps Script，並「重新部署 → 新版本」。');
+                    }
+                    if (/accounts\.google\.com|ServiceLogin|需要授權|請登入/i.test(text)) {
+                        throw new Error('權限未開放（需設為任何人）：Apps Script → 部署 → 編輯 →「誰可以存取」改為「任何人」後重新部署。');
+                    }
+                    throw new Error('後端回傳非預期內容（可能不是本系統後端，或部署版本過舊）。');
+                }
                 if (data && data.status === 'error') throw new Error(data.message || '後端回傳錯誤');
                 return data;
+            })
+            .catch(err => {
+                // fetch 本身失敗（TypeError）通常代表跨來源被擋或錯誤頁沒有 CORS 標頭
+                if (err instanceof TypeError) {
+                    throw new Error('無法連線（Failed to fetch）。常見原因：①GAS 部署權限非「任何人」②後端缺 doPost 導致錯誤頁沒有 CORS 標頭 ③以 file:// 開啟被跨來源擋下，請改用 http://localhost:8000/ 開啟。');
+                }
+                throw err;
             });
 
         // 預設公版範例資料 (經紅、藍、標竿隊長聯合修改版)
@@ -152,6 +174,30 @@
                     window.localStorage.setItem('gasApiUrl', next.trim());
                     window.location.reload();
                 }
+            };
+
+            // 測試連線：以 GET 直接打 GAS /exec，回報是否為正常 JSON、登入頁或缺 doPost
+            const testConnection = () => {
+                setConnStatus({ loading: true, message: '測試連線中（GET ' + GAS_API_URL + '）...', error: false });
+                fetch(GAS_API_URL, { method: 'GET', redirect: 'follow' })
+                    .then(res => res.text().then(text => ({ status: res.status, text: text })))
+                    .then(({ status, text }) => {
+                        try {
+                            const j = JSON.parse(text);
+                            const ok = !!(j && (j.status === 'ok' || j.versions !== undefined));
+                            setConnStatus({ loading: false, message: ok ? ('連線正常，後端回應：' + text.slice(0, 120)) : ('已連到後端，但回應非預期：' + text.slice(0, 120)), error: !ok });
+                        } catch (e) {
+                            let msg;
+                            if (/doPost|指令碼函式/.test(text)) msg = '連到 GAS，但部署缺 doPost 或為舊版：請貼上最新 Code.gs 並重新部署。';
+                            else if (/accounts\.google\.com|ServiceLogin|需要授權|請登入/i.test(text)) msg = '被導向登入頁：部署權限不是「任何人」，請修改後重新部署。';
+                            else msg = '連到網址但回應非 JSON（可能是別的網頁應用）。HTTP ' + status;
+                            setConnStatus({ loading: false, message: msg, error: true });
+                        }
+                    })
+                    .catch(err => {
+                        setConnStatus({ loading: false, message: '測試連線失敗（' + err.message + '）。將在新分頁開啟該網址供你檢視；若以 file:// 開啟，請改用 http://localhost:8000/ 。', error: true });
+                        window.open(GAS_API_URL, '_blank');
+                    });
             };
 
             // 儲存至 Google Sheet（直接連線；不再阻擋離線）
@@ -245,9 +291,14 @@
                                 </h1>
                                 <p className="text-gray-500 mt-1.5 text-sm font-medium">直接連線 Google Apps Script，計畫書內容存於 Google Sheet；含完整防呆與主計核銷邏輯</p>
                             </div>
-                            <button onClick={changeApiUrl} className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1.5 shrink-0">
-                                <i className="fa-solid fa-link"></i> 變更連線網址
-                            </button>
+                            <div className="flex items-center gap-3 shrink-0">
+                                <button onClick={testConnection} className="text-xs text-gray-400 hover:text-emerald-600 transition flex items-center gap-1.5">
+                                    <i className="fa-solid fa-plug-circle-check"></i> 測試連線
+                                </button>
+                                <button onClick={changeApiUrl} className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1.5">
+                                    <i className="fa-solid fa-link"></i> 變更連線網址
+                                </button>
+                            </div>
                         </div>
 
                         {/* 雲端儲存與狀態面板 */}
