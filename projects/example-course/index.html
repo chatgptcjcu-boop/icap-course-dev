@@ -113,6 +113,127 @@
             ]
         };
 
+        // ------------------------------------------------------------------
+        // 匯入補充資料（Gemini / ChatGPT 產生內容）解析工具
+        //
+        // 支援兩種輸入：
+        //   1) JSON：結構符合本案資料模型（basicInfo / proposalDetails / addie /
+        //      syllabus / budgetItems）者，直接對應合併。
+        //   2) 文字 / Markdown：以標題段落（如「分析階段 (Analysis)」…）判斷，
+        //      對應到 ADDIE 五階段與企劃章節；程式會自動略過 ``` 程式碼圍籬與
+        //      ```eof 結束標記，並剔除段落之間的分隔線與說明文字。
+        // 無法辨識歸類的內容不會遺失，會集中於 unmapped 供使用者選擇附加。
+        // ------------------------------------------------------------------
+        const PLAN_IMPORT_TARGETS = [
+            { key: 'addie.analysis',            path: ['addie', 'analysis'],            label: 'ADDIE：分析階段 (Analysis)',       test: (h) => /(分析階段|Analysis)/i.test(h) },
+            { key: 'addie.design',              path: ['addie', 'design'],              label: 'ADDIE：設計階段 (Design)',         test: (h) => /(設計階段|Design)/i.test(h) },
+            { key: 'addie.development',         path: ['addie', 'development'],         label: 'ADDIE：發展階段 (Development)',     test: (h) => /(發展階段|Development)/i.test(h) },
+            { key: 'addie.implementation',      path: ['addie', 'implementation'],      label: 'ADDIE：實施階段 (Implementation)', test: (h) => /(實施階段|Implementation)/i.test(h) },
+            { key: 'addie.evaluation',          path: ['addie', 'evaluation'],          label: 'ADDIE：評估階段 (Evaluation)',     test: (h) => /(評估階段|Evaluation)/i.test(h) },
+            { key: 'proposalDetails.background',    path: ['proposalDetails', 'background'],    label: '企劃：計畫緣起與背景', test: (h) => /(計畫緣起|緣起與背景|計畫背景)/.test(h) },
+            { key: 'proposalDetails.objectives',    path: ['proposalDetails', 'objectives'],    label: '企劃：計畫具體目標', test: (h) => /(具體目標|計畫目標)/.test(h) },
+            { key: 'proposalDetails.benefits',      path: ['proposalDetails', 'benefits'],      label: '企劃：專案預期效益', test: (h) => /(預期效益|計畫效益)/.test(h) },
+            { key: 'proposalDetails.prerequisites', path: ['proposalDetails', 'prerequisites'], label: '企劃：參訓先備條件', test: (h) => /(先備條件|報名資格|參訓資格)/.test(h) },
+        ];
+
+        // 解析純文字 / Markdown：依標題切段，對應到本案欄位
+        const parseSupplementaryText = (raw) => {
+            const lines = String(raw).replace(/\r\n/g, '\n').split('\n');
+            const buffers = {};
+            const order = [];
+            const unmapped = [];
+            let current = null;      // 目前對應欄位的 key
+            let capturing = false;   // 是否正在擷取內容
+
+            const isHeading = (l) => /^\s{0,3}#{1,6}\s+/.test(l);
+
+            for (const line of lines) {
+                const trimmed = line.trimEnd();
+
+                // 程式碼圍籬：一律不納入內容；```eof 或單獨 ``` 視為結束擷取
+                if (/^\s*```/.test(trimmed)) {
+                    if (/^\s*```(eof)?\s*$/.test(trimmed)) capturing = false;
+                    continue;
+                }
+
+                if (isHeading(trimmed)) {
+                    const headingText = trimmed.replace(/^\s*#{1,6}\s+/, '');
+                    const target = PLAN_IMPORT_TARGETS.find(t => t.test(headingText));
+                    if (target) {
+                        current = target.key;
+                        // 重置緩衝：可丟棄「真正標題」前的說明文字（如「第二份：…」段落）
+                        buffers[current] = [];
+                        if (!order.some(o => o.key === current)) order.push({ key: current, label: target.label, path: target.path });
+                        capturing = true;
+                        continue; // 標題行本身不納入內容
+                    }
+                    // 非目標標題：擷取中則當內容，否則歸為未對應
+                    if (capturing && current) buffers[current].push(trimmed);
+                    else unmapped.push(trimmed);
+                    continue;
+                }
+
+                if (capturing && current) buffers[current].push(line);
+                else if (trimmed.length && !/^\s*-{3,}\s*$/.test(trimmed)) unmapped.push(line);
+            }
+
+            const fields = order
+                .map(o => {
+                    const value = buffers[o.key].join('\n').replace(/\n{3,}/g, '\n\n').trim();
+                    return { key: o.key, path: o.path, label: o.label, value, chars: value.length, type: 'text' };
+                })
+                .filter(f => f.value.length > 0);
+
+            const unmappedText = unmapped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+            return { fields, unmapped: unmappedText };
+        };
+
+        // 由 JSON 物件產生預覽欄位清單
+        const jsonFieldsFromObj = (obj) => {
+            const fields = [];
+            const groupLabel = { basicInfo: '基本資訊', proposalDetails: '企劃內容', addie: 'ADDIE' };
+            ['basicInfo', 'proposalDetails', 'addie'].forEach(g => {
+                if (obj[g] && typeof obj[g] === 'object' && !Array.isArray(obj[g])) {
+                    Object.keys(obj[g]).forEach(k => {
+                        const v = obj[g][k];
+                        const value = (typeof v === 'string') ? v : JSON.stringify(v);
+                        fields.push({ key: g + '.' + k, path: [g, k], label: groupLabel[g] + '：' + k, value, chars: String(value).length, type: 'text' });
+                    });
+                }
+            });
+            if (Array.isArray(obj.syllabus)) fields.push({ key: 'syllabus', path: ['syllabus'], label: '課程大綱 (syllabus)', value: JSON.stringify(obj.syllabus, null, 2), chars: obj.syllabus.length, type: 'array' });
+            if (Array.isArray(obj.budgetItems)) fields.push({ key: 'budgetItems', path: ['budgetItems'], label: '經費項目 (budgetItems)', value: JSON.stringify(obj.budgetItems, null, 2), chars: obj.budgetItems.length, type: 'array' });
+            return fields;
+        };
+
+        // 主解析入口：先試 JSON，失敗再走文字 / Markdown
+        const parseSupplementary = (raw) => {
+            const text = String(raw).trim();
+            let jsonText = text;
+            const fenceJson = text.match(/```json\s*([\s\S]*?)```/i);
+            if (fenceJson) jsonText = fenceJson[1].trim();
+            if (jsonText.startsWith('{')) {
+                try {
+                    const obj = JSON.parse(jsonText);
+                    if (obj && typeof obj === 'object') {
+                        return { isJson: true, json: obj, fields: jsonFieldsFromObj(obj), unmapped: '' };
+                    }
+                } catch (e) { /* 非合法 JSON，改走文字解析 */ }
+            }
+            const { fields, unmapped } = parseSupplementaryText(text);
+            return { isJson: false, json: null, fields, unmapped };
+        };
+
+        // 合併文字：append 附加（保留原內容）/ replace 覆蓋
+        const mergeText = (existing, incoming, mode) => {
+            const inc = (incoming == null ? '' : String(incoming)).trim();
+            if (mode === 'replace') return inc;
+            const ex = (existing == null ? '' : String(existing));
+            if (!ex.trim()) return inc;
+            if (!inc) return ex;
+            return ex.trimEnd() + '\n\n' + inc;
+        };
+
         const IcapGenerator = () => {
             const [activeTab, setActiveTab] = useState('basic');
             const [basicInfo, setBasicInfo] = useState(DEFAULT_DATA.basicInfo);
@@ -123,6 +244,15 @@
             const [checklist, setChecklist] = useState({
                 ttqs: true, experts: true, bilingual: true, noEquipment: true, rubric: true, independentAcc: false
             });
+
+            // 匯入補充資料（Gemini / ChatGPT）狀態
+            const [showImport, setShowImport] = useState(false);
+            const [importText, setImportText] = useState('');
+            const [importFileName, setImportFileName] = useState('');
+            const [importMode, setImportMode] = useState('append'); // append | replace
+            const [parseResult, setParseResult] = useState(null);
+            const [importSelected, setImportSelected] = useState({});
+            const [includeUnmapped, setIncludeUnmapped] = useState(true);
 
             // 雲端連線狀態（直接連線 GAS；不再降級為離線單機模式）
             const [savedVersions, setSavedVersions] = useState([]);
@@ -225,6 +355,83 @@
                 const updated = [...syllabus]; updated[index][field] = value; setSyllabus(updated);
             };
 
+            // 匯入補充資料：載入檔案
+            const handleImportFile = (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    setImportText(String(ev.target.result || ''));
+                    setImportFileName(file.name);
+                    setParseResult(null);
+                };
+                reader.readAsText(file, 'utf-8');
+            };
+
+            // 匯入補充資料：解析並預覽
+            const handleParseImport = () => {
+                const text = importText.trim();
+                if (!text) { alert('請先貼上或上傳補充資料內容。'); return; }
+                const result = parseSupplementary(text);
+                if (result.fields.length === 0 && !result.unmapped) {
+                    alert('無法從內容中辨識出可對應的段落，請確認格式（建議含「分析階段」等標題，或提供符合資料模型的 JSON）。');
+                }
+                const sel = {};
+                result.fields.forEach(f => { sel[f.key] = true; });
+                setImportSelected(sel);
+                setIncludeUnmapped(!!result.unmapped);
+                setParseResult(result);
+            };
+
+            // 匯入補充資料：套用合併至本案
+            const applyImport = () => {
+                if (!parseResult) return;
+                const mode = importMode;
+                const chosen = parseResult.fields.filter(f => importSelected[f.key] !== false);
+                const upd = { basicInfo: {}, proposalDetails: {}, addie: {}, syllabus: null, budgetItems: null };
+                chosen.forEach(f => {
+                    if (f.type === 'array') {
+                        if (f.path[0] === 'syllabus' && parseResult.json) upd.syllabus = parseResult.json.syllabus;
+                        if (f.path[0] === 'budgetItems' && parseResult.json) upd.budgetItems = parseResult.json.budgetItems;
+                        return;
+                    }
+                    const [group, key] = f.path;
+                    if (upd[group]) upd[group][key] = f.value;
+                });
+
+                if (Object.keys(upd.addie).length) {
+                    setAddie(prev => {
+                        const next = { ...prev };
+                        Object.keys(upd.addie).forEach(k => { next[k] = mergeText(prev[k], upd.addie[k], mode); });
+                        return next;
+                    });
+                }
+                if (Object.keys(upd.basicInfo).length) {
+                    // 基本資訊多為短欄位，一律以匯入值覆蓋
+                    setBasicInfo(prev => ({ ...prev, ...upd.basicInfo }));
+                }
+                const unmappedText = (includeUnmapped && parseResult.unmapped) ? parseResult.unmapped : '';
+                if (Object.keys(upd.proposalDetails).length || unmappedText) {
+                    setProposalDetails(prev => {
+                        const next = { ...prev };
+                        Object.keys(upd.proposalDetails).forEach(k => { next[k] = mergeText(prev[k], upd.proposalDetails[k], mode); });
+                        if (unmappedText) {
+                            next.background = mergeText(next.background, '【匯入補充資料（未分類）】\n' + unmappedText, 'append');
+                        }
+                        return next;
+                    });
+                }
+                if (upd.syllabus) setSyllabus(upd.syllabus);
+                if (upd.budgetItems) setBudgetItems(upd.budgetItems);
+
+                const count = chosen.length + (unmappedText ? 1 : 0);
+                setShowImport(false);
+                setParseResult(null);
+                setImportText('');
+                setImportFileName('');
+                setConnStatus({ loading: false, message: `已匯入 ${count} 項補充資料至本案（尚未儲存）。請確認內容後於上方「寫入資料庫」同步至 Google Sheet。`, error: false });
+            };
+
             // 自訂 Tab 按鈕元件
             const TabButton = ({ id, iconClass, label }) => (
                 <button onClick={() => setActiveTab(id)} className={`flex items-center space-x-2 px-5 py-4 text-sm font-semibold transition-all border-b-2 whitespace-nowrap ${activeTab === id ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}>
@@ -245,9 +452,14 @@
                                 </h1>
                                 <p className="text-gray-500 mt-1.5 text-sm font-medium">直接連線 Google Apps Script，計畫書內容存於 Google Sheet；含完整防呆與主計核銷邏輯</p>
                             </div>
-                            <button onClick={changeApiUrl} className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1.5 shrink-0">
-                                <i className="fa-solid fa-link"></i> 變更連線網址
-                            </button>
+                            <div className="flex items-center gap-3 shrink-0">
+                                <button onClick={() => setShowImport(true)} className="text-sm font-bold px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition flex items-center gap-2">
+                                    <i className="fa-solid fa-file-import"></i> 匯入補充資料 (Gemini/ChatGPT)
+                                </button>
+                                <button onClick={changeApiUrl} className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1.5">
+                                    <i className="fa-solid fa-link"></i> 變更連線網址
+                                </button>
+                            </div>
                         </div>
 
                         {/* 雲端儲存與狀態面板 */}
@@ -609,6 +821,80 @@
                         </div>
                         )}
                     </div>
+
+                    {/* 匯入補充資料 (Gemini/ChatGPT) 對話框 */}
+                    {showImport && (
+                    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto no-print">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8">
+                            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+                                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                    <i className="fa-solid fa-file-import text-purple-600"></i> 匯入補充資料 (Gemini / ChatGPT)
+                                </h3>
+                                <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-gray-600"><i className="fa-solid fa-xmark text-xl"></i></button>
+                            </div>
+                            <div className="p-5 space-y-4">
+                                <p className="text-sm text-gray-500 leading-relaxed">
+                                    貼上 AI（Gemini／ChatGPT）產生的補充內容，或上傳 <span className="font-mono text-xs bg-gray-100 px-1 rounded">.txt / .md / .json</span> 檔。
+                                    系統會嘗試把「ADDIE 五階段（分析／設計／發展／實施／評估）」與企劃章節對應到<strong>本案</strong>欄位；
+                                    無法對應的內容不會遺失，會保留供你選擇附加。匯入採合併方式，套用前可先預覽並勾選。
+                                </p>
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 cursor-pointer hover:bg-purple-100 transition">
+                                        <i className="fa-solid fa-upload"></i> 上傳檔案
+                                        <input type="file" accept=".txt,.md,.markdown,.json" onChange={handleImportFile} className="hidden" />
+                                    </label>
+                                    {importFileName && <span className="text-xs text-gray-500 truncate">已載入：{importFileName}</span>}
+                                </div>
+                                <textarea rows={8} value={importText} onChange={e => { setImportText(e.target.value); setParseResult(null); }} placeholder="在此貼上 Gemini / ChatGPT 產生的內容（Markdown 段落或符合資料模型的 JSON 皆可）..." className="w-full p-3 border rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-purple-500 outline-none custom-scrollbar" />
+                                <div className="flex flex-wrap gap-4 items-center">
+                                    <button onClick={handleParseImport} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-lg transition"><i className="fa-solid fa-magnifying-glass mr-1"></i> 解析預覽</button>
+                                    <div className="flex items-center gap-3 text-sm text-gray-600">
+                                        <span className="font-semibold">合併方式：</span>
+                                        <label className="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="importMode" checked={importMode === 'append'} onChange={() => setImportMode('append')} /> 附加於現有內容</label>
+                                        <label className="inline-flex items-center gap-1.5 cursor-pointer"><input type="radio" name="importMode" checked={importMode === 'replace'} onChange={() => setImportMode('replace')} /> 覆蓋現有內容</label>
+                                    </div>
+                                </div>
+
+                                {parseResult && (
+                                <div className="border rounded-xl p-4 bg-gray-50 space-y-3">
+                                    <div className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                                        <i className={`fa-solid ${parseResult.isJson ? 'fa-code text-blue-600' : 'fa-align-left text-emerald-600'}`}></i>
+                                        解析結果 {parseResult.isJson ? '（偵測為 JSON 結構，直接對應資料模型）' : '（偵測為文字／Markdown 段落）'}：可對應 {parseResult.fields.length} 個欄位
+                                    </div>
+                                    {parseResult.fields.length > 0 ? (
+                                    <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                                        {parseResult.fields.map(f => (
+                                        <label key={f.key} className="flex items-start gap-2 bg-white border border-gray-200 rounded-lg p-3 cursor-pointer hover:border-purple-300 transition">
+                                            <input type="checkbox" className="mt-1" checked={importSelected[f.key] !== false} onChange={e => setImportSelected({ ...importSelected, [f.key]: e.target.checked })} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-sm font-semibold text-gray-800">{f.label} <span className="text-xs font-normal text-gray-400">（{f.type === 'array' ? f.chars + ' 筆' : f.chars + ' 字'}）</span></div>
+                                                <div className="text-xs text-gray-500 mt-1 whitespace-pre-line break-words">{String(f.value).slice(0, 160)}{String(f.value).length > 160 ? '…' : ''}</div>
+                                            </div>
+                                        </label>
+                                        ))}
+                                    </div>
+                                    ) : <div className="text-sm text-amber-600">未辨識出可直接對應的段落，請確認格式或改用 JSON。</div>}
+
+                                    {parseResult.unmapped && (
+                                    <label className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer">
+                                        <input type="checkbox" className="mt-1" checked={includeUnmapped} onChange={e => setIncludeUnmapped(e.target.checked)} />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-semibold text-amber-800">未能對應的內容（勾選後將附加至「計畫緣起與背景」欄位，避免遺失）</div>
+                                            <div className="text-xs text-amber-700/80 mt-1 whitespace-pre-line break-words">{parseResult.unmapped.slice(0, 200)}{parseResult.unmapped.length > 200 ? '…' : ''}</div>
+                                        </div>
+                                    </label>
+                                    )}
+
+                                    <div className="flex justify-end gap-2 pt-2 border-t border-gray-200">
+                                        <button onClick={() => setShowImport(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition">取消</button>
+                                        <button onClick={applyImport} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition"><i className="fa-solid fa-check mr-1"></i> 確認匯入本案</button>
+                                    </div>
+                                </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    )}
                 </div>
             );
         };
