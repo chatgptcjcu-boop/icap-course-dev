@@ -27,11 +27,16 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.5); }
 
+        .print-only { display: none; }
         @media print {
             body { background: white; color: black; }
             .no-print { display: none !important; }
+            .print-only { display: inline !important; }
             .a4-page { box-shadow: none !important; max-width: 100% !important; padding: 0 !important; margin: 0 !important; border: none !important; }
             .print-page-break { page-break-before: always; }
+            .self-eval-table { font-size: 10px; }
+            .self-eval-table td, .self-eval-table th { padding: 4px 6px !important; }
+            tr, td, th { page-break-inside: avoid; }
         }
     </style>
 </head>
@@ -123,6 +128,39 @@
             'E-2':  { dim: '評估 Evaluate',  title: '學習成果證據類型明確', critical: true },
             'E-3':  { dim: '評估 Evaluate',  title: '課程自我管考與持續改善機制', critical: false },
         };
+
+        // ------------------------------------------------------------------
+        // 職能基準品質認證審查指標（OCS I-P-O 三面向 21 項要求條件）
+        // 來源：data/quality_review/rubric_ocs.json（id + 短標題 + 審查重點）
+        // 供非 ADDIE 章節（企劃／基本設定／課綱）之欄位對照與品質自評表使用。
+        // dim = 面向名稱；focus = 審查重點；critical = 是否為關鍵（必符合）條件。
+        // ------------------------------------------------------------------
+        const OCS_INDICATORS = {
+            '1.1.1': { dim: 'OCS 需求面', title: '產業領域與勞動市場重要性（具公信力佐證）', focus: '產業面重要性說明合理且引用出處明確', critical: true },
+            '1.1.2': { dim: 'OCS 需求面', title: '職業重要性至少兩項（公共安全/法規、缺口等）', focus: '職業面至少兩項重要性，佐證充分', critical: true },
+            '1.2.1': { dim: 'OCS 需求面', title: '職能基準後續應用方式具體可行', focus: '應用方式具體可行', critical: false },
+            '1.2.2': { dim: 'OCS 需求面', title: '未來應用單位機構與應用構想', focus: '協力單位與應用場景明確', critical: false },
+            '1.2.3': { dim: 'OCS 需求面', title: '未來應用可能影響人數規模預估', focus: '影響人數估算合理', critical: false },
+            '2.1.1': { dim: 'OCS 流程面', title: '職能分析方法考量原因及合理性', focus: '方法選擇有理論或實務依據', critical: true },
+            '2.1.2': { dim: 'OCS 流程面', title: '依方法規劃合理流程步驟', focus: '分析流程步驟完整', critical: true },
+            '2.2.1': { dim: 'OCS 流程面', title: '配合方法設計工具（問卷/訪談題綱）', focus: '工具設計與方法一致', critical: false },
+            '2.2.2': { dim: 'OCS 流程面', title: '循序完成步驟並提供紀錄文件', focus: '步驟紀錄完整可稽核', critical: true },
+            '2.2.3': { dim: 'OCS 流程面', title: '利益關係人參與（3年以上資深占6成以上）', focus: '利益關係人比例與代表性', critical: true },
+            '2.3.1': { dim: 'OCS 流程面', title: '驗證方法工具與樣本選擇說明', focus: '驗證方法適切', critical: false },
+            '2.3.2': { dim: 'OCS 流程面', title: '驗證結果顯示信效度或為市場所需', focus: '驗證結果具說服力', critical: true },
+            '2.3.3': { dim: 'OCS 流程面', title: '依驗證結果合理調整職能內涵', focus: '調整紀錄與理由清楚', critical: false },
+            '3.1':   { dim: 'OCS 成果面', title: '職能基準產出項目完備（附件2-2體例）', focus: '體例格式符合附件 2-2', critical: true },
+            '3.2.1': { dim: 'OCS 成果面', title: '工作描述跨組織適用、不與他職類重疊', focus: '職類界定清楚', critical: true },
+            '3.2.2': { dim: 'OCS 成果面', title: '工作描述與任務反映產業現況', focus: '任務與現況一致', critical: true },
+            '3.3.1': { dim: 'OCS 成果面', title: '職能內涵完整性經適切方法驗證', focus: '內涵完整性經驗證', critical: true },
+            '3.3.2': { dim: 'OCS 成果面', title: '職能內涵符合實務工作及趨勢', focus: '內涵與實務一致', critical: true },
+            '3.4.1': { dim: 'OCS 成果面', title: '行為指標符合實務工作及趨勢', focus: '指標與實務對應', critical: true },
+            '3.4.2': { dim: 'OCS 成果面', title: '行為指標具體清楚描述行為表現', focus: '指標可觀察可評量', critical: true },
+            '3.4.3': { dim: 'OCS 成果面', title: '行為指標能力程度對應職能級別', focus: '級別對應正確', critical: true },
+        };
+
+        // 合併查表：欄位／自評表旁「對應指標」標籤共用（課程 ADDIE + OCS）
+        const ALL_INDICATORS = { ...RUBRIC_INDICATORS, ...OCS_INDICATORS };
 
         // ADDIE 各階段欄位／對照表結構（驅動精靈式編輯 UI、完成度計算與預覽）
         // required=true → 顯示「必填」徽章並納入完成度分母。
@@ -265,24 +303,139 @@
             return base;
         };
 
+        // ------------------------------------------------------------------
+        // 非 ADDIE 章節資料模型：預設鍵與正規化（確保舊存檔載入後仍可 round-trip）
+        // 舊版存檔缺少新欄位時，一律以空字串補齊，避免 React 受控元件由 undefined 變為
+        // 非受控；新欄位寫回 Google Sheet 時亦一併保存。
+        // ------------------------------------------------------------------
+        const BASIC_INFO_DEFAULTS = { courseName: '', industry: '', level: '2', hours: 0, targetAudience: '', competencyCode: '', competencyName: '', occupationCategory: '' };
+        const PROPOSAL_DEFAULTS = { background: '', objectives: '', benefits: '', prerequisites: '', policyBasis: '', industryDemandEvidence: '', applicationBenefit: '', analysisMethod: '', stakeholders: '', verification: '', kpi: '' };
+        const SYLLABUS_ITEM_DEFAULTS = { unit: '', hours: 0, method: '', competencyUnit: '', objective: '', indicators: '' };
+        const normalizeBasicInfo = (b) => ({ ...BASIC_INFO_DEFAULTS, ...(b && typeof b === 'object' && !Array.isArray(b) ? b : {}) });
+        const normalizeProposal = (p) => ({ ...PROPOSAL_DEFAULTS, ...(p && typeof p === 'object' && !Array.isArray(p) ? p : {}) });
+        const normalizeSyllabus = (list) => (Array.isArray(list) ? list : []).map(u => ({ ...SYLLABUS_ITEM_DEFAULTS, ...(u && typeof u === 'object' ? u : {}) }));
+        const normalizeBudget = (list) => (Array.isArray(list) ? list : []).map((it, i) => ({
+            id: (it && it.id != null) ? it.id : (i + 1),
+            category: (it && it.category) || '其他費',
+            name: (it && it.name) || '',
+            amount: Number(it && it.amount) || 0,
+        }));
+        const normalizeSelfCheck = (s) => (s && typeof s === 'object' && !Array.isArray(s)) ? { ...s } : {};
+
+        // ------------------------------------------------------------------
+        // 品質自評表引擎：彙整「課程 ADDIE 15 + OCS 21 = 36 項」指標，
+        // 逐指標【自動引用】目前計畫內容作為佐證摘要；空白者標示（未填，建議補正）。
+        // 回傳 { groups, all, total, filledCount, coverage(%) }。
+        // ------------------------------------------------------------------
+        const seS = (v) => String(v == null ? '' : v).trim();
+        const seJoin = (...xs) => xs.map(seS).filter(Boolean).join('｜');
+        const seTable = (rows, cols) => Array.isArray(rows)
+            ? rows.filter(r => r && Object.values(r).some(v => seS(v)))
+                  .map(r => cols.map(c => seS(r[c])).filter(Boolean).join('／')).join('；')
+            : '';
+
+        const computeSelfEval = (data) => {
+            const bi = normalizeBasicInfo(data && data.basicInfo);
+            const pd = normalizeProposal(data && data.proposalDetails);
+            const ad = (data && data.addie) || {};
+            const syl = Array.isArray(data && data.syllabus) ? data.syllabus : [];
+            const st = (k) => ad[k] || {};
+            const sylHours = syl.reduce((s, u) => s + (Number(String(u.hours).replace(/[^0-9.]/g, '')) || 0), 0);
+            const sylUnits = syl.filter(u => seS(u.unit)).map(u => seS(u.unit)).join('、');
+            const sylComp = syl.map(u => seS(u.competencyUnit)).filter(Boolean).join('；');
+            const sylObj = syl.map(u => seS(u.objective)).filter(Boolean).join('；');
+            const sylInd = syl.map(u => seS(u.indicators)).filter(Boolean).join(' / ');
+
+            const M = {
+                'A-1':  { focus: '職能來源明確且與課程目標連結', field: '基本設定→職能基準名稱/代碼、對接職類；ADDIE 分析→具體職能依據', ev: seJoin(bi.competencyName, bi.competencyCode, bi.occupationCategory, st('analysis').competencyBasis) },
+                'A-2':  { focus: '目標族群、先備條件、缺口分析', field: '企劃→產業與勞動力需求佐證；ADDIE 分析→產業需求、學員缺口', ev: seJoin(pd.industryDemandEvidence, st('analysis').industryNeed, st('analysis').learnerAnalysis) },
+                'A-3':  { focus: 'CU—OCSU—單元對照可追溯', field: 'ADDIE 分析→職能基準對應表；課綱→對應職能單元', ev: seJoin(seTable(st('analysis').competencyMapTable, ['cu', 'course', 'level']), sylComp) },
+                'D-1':  { focus: '目標 SMART 且可評量', field: 'ADDIE 設計→學習目標；課綱→單元教學目標', ev: seJoin(st('design').learningObjectives, sylObj) },
+                'D-2':  { focus: '單元、時數、職能對照齊全', field: '課綱→單元/時數/職能對照；ADDIE 設計→課程地圖表', ev: seJoin(syl.length ? ('課綱共 ' + syl.length + ' 單元、時數合計 ' + sylHours + ' 小時') : '', seTable(st('design').courseMapTable, ['unit', 'hours', 'objective'])) },
+                'D-3':  { focus: '形成性＋總結性評量藍圖', field: 'ADDIE 設計→評量方式規劃', ev: seJoin(st('design').assessmentPlan) },
+                'DV-1': { focus: '教材覆蓋所有職能單元', field: 'ADDIE 發展→教材/教案/數位輔具', ev: seJoin(st('development').materials) },
+                'DV-2': { focus: '師資表、資歷證明', field: 'ADDIE 發展→師資資格對應表', ev: seTable(st('development').instructorTable, ['name', 'qualification', 'experience', 'unit']) },
+                'DV-3': { focus: '知識講授、技能演練、態度討論配比', field: 'ADDIE 發展→教學方法(K/S/A)', ev: seJoin(st('development').teachingMethods) },
+                'I-1':  { focus: '簽到、教案、現場照片或紀錄', field: 'ADDIE 實施→開課計畫與學員遴選', ev: seJoin(st('implementation').enrollmentPlan) },
+                'I-2':  { focus: '平台操作手冊對照', field: 'ADDIE 實施→iCAP 平台開課登錄流程', ev: seJoin(st('implementation').platformProcess) },
+                'I-3':  { focus: '時數表加總正確（≥ 12 小時）', field: '基本設定→總授課時數；課綱/實施排程時數加總', ev: seJoin('總授課 ' + seS(bi.hours) + ' 小時', syl.length ? ('課綱時數合計 ' + sylHours + ' 小時') : '', seTable(st('implementation').scheduleTable, ['date', 'unit', 'hours', 'instructor']) ? '實施排程已建立' : '') },
+                'E-1':  { focus: '評量藍圖與職能對照', field: 'ADDIE 評估→四層次評量對照表', ev: seTable(st('evaluation').kirkpatrickTable, ['level', 'method', 'tool', 'threshold']) },
+                'E-2':  { focus: '證據可留存備查', field: 'ADDIE 評估→學習成果證據類型', ev: seJoin(st('evaluation').evidenceTypes) },
+                'E-3':  { focus: '回饋循環、修訂紀錄', field: 'ADDIE 評估→回饋改善與自我管考', ev: seJoin(st('evaluation').improvementMechanism) },
+                '1.1.1': { field: '企劃→依據政策與法規、產業與勞動力需求佐證', ev: seJoin(pd.policyBasis, pd.industryDemandEvidence) },
+                '1.1.2': { field: '企劃→產業與勞動力需求佐證（職業重要性）', ev: seJoin(pd.industryDemandEvidence) },
+                '1.2.1': { field: '企劃→應用效益（應用方式）、專案預期效益', ev: seJoin(pd.applicationBenefit, pd.benefits) },
+                '1.2.2': { field: '企劃→應用效益（協力/應用單位）', ev: seJoin(pd.applicationBenefit) },
+                '1.2.3': { field: '企劃→應用效益（影響人數規模）', ev: seJoin(pd.applicationBenefit) },
+                '2.1.1': { field: '企劃→職能分析方法與流程（方法選擇）', ev: seJoin(pd.analysisMethod) },
+                '2.1.2': { field: '企劃→職能分析方法與流程（流程步驟）', ev: seJoin(pd.analysisMethod) },
+                '2.2.1': { field: '企劃→職能分析方法與流程（工具設計）', ev: seJoin(pd.analysisMethod) },
+                '2.2.2': { field: '企劃→職能分析方法；ADDIE 分析佐證', ev: seJoin(pd.analysisMethod, st('analysis').industryNeed) },
+                '2.2.3': { field: '企劃→利益關係人／專家參與代表性', ev: seJoin(pd.stakeholders) },
+                '2.3.1': { field: '企劃→職能內涵驗證（方法/樣本）', ev: seJoin(pd.verification) },
+                '2.3.2': { field: '企劃→職能內涵驗證（信效度結果）', ev: seJoin(pd.verification) },
+                '2.3.3': { field: '企劃→職能內涵驗證（依結果調整）', ev: seJoin(pd.verification) },
+                '3.1':   { field: '基本設定→職能基準名稱/代碼；ADDIE 分析對應表', ev: seJoin(bi.competencyName, bi.competencyCode, seTable(st('analysis').competencyMapTable, ['cu', 'course', 'level'])) },
+                '3.2.1': { field: '基本設定→對接職類；企劃→計畫緣起', ev: seJoin(bi.occupationCategory, pd.background) },
+                '3.2.2': { field: '課綱→單元；ADDIE 分析→產業需求', ev: seJoin(sylUnits, st('analysis').industryNeed) },
+                '3.3.1': { field: 'ADDIE 分析→職能對應表；企劃→驗證', ev: seJoin(seTable(st('analysis').competencyMapTable, ['cu', 'course', 'level']), pd.verification) },
+                '3.3.2': { field: '課綱→可評量行為指標', ev: seJoin(sylInd) },
+                '3.4.1': { field: '課綱→可評量行為指標', ev: seJoin(sylInd) },
+                '3.4.2': { field: '課綱→可評量行為指標', ev: seJoin(sylInd) },
+                '3.4.3': { field: '基本設定→職能級別；課綱→對應職能單元', ev: seJoin('職能級別 第 ' + seS(bi.level) + ' 級', sylComp) },
+            };
+            const courseIds = ['A-1', 'A-2', 'A-3', 'D-1', 'D-2', 'D-3', 'DV-1', 'DV-2', 'DV-3', 'I-1', 'I-2', 'I-3', 'E-1', 'E-2', 'E-3'];
+            const ocsIds = ['1.1.1', '1.1.2', '1.2.1', '1.2.2', '1.2.3', '2.1.1', '2.1.2', '2.2.1', '2.2.2', '2.2.3', '2.3.1', '2.3.2', '2.3.3', '3.1', '3.2.1', '3.2.2', '3.3.1', '3.3.2', '3.4.1', '3.4.2', '3.4.3'];
+            const rowOf = (id) => {
+                const meta = ALL_INDICATORS[id] || {};
+                const m = M[id] || { field: '', ev: '' };
+                const ev = seS(m.ev);
+                return { id, dim: meta.dim || '', title: meta.title || '', focus: m.focus || meta.focus || '', critical: !!meta.critical, field: m.field || '', evidence: ev, filled: ev.length > 0 };
+            };
+            const groups = [
+                { key: 'course', label: '職能導向課程品質認證（ADDIE 五構面，15 項）', rows: courseIds.map(rowOf) },
+                { key: 'ocs', label: '職能基準品質認證（I-P-O 三面向，21 項）', rows: ocsIds.map(rowOf) },
+            ];
+            const all = groups.reduce((a, g) => a.concat(g.rows), []);
+            const filledCount = all.filter(r => r.filled).length;
+            return { groups, all, total: all.length, filledCount, coverage: all.length ? Math.round(filledCount / all.length * 100) : 0 };
+        };
+
+        // 自評狀態：met=符合、partial=部分、unmet=未符合；未手動設定時以「是否已引用到內容」推定。
+        const SELF_CHECK_OPTIONS = [
+            { value: 'met', label: '符合', score: 1 },
+            { value: 'partial', label: '部分符合', score: 0.5 },
+            { value: 'unmet', label: '未符合', score: 0 },
+        ];
+        const effectiveStatus = (selfCheck, row) => (selfCheck && selfCheck[row.id]) || (row.filled ? 'met' : 'unmet');
+        const statusMeta = (v) => SELF_CHECK_OPTIONS.find(o => o.value === v) || SELF_CHECK_OPTIONS[2];
+
         // 預設公版範例資料 (經紅、藍、標竿隊長聯合修改版；ADDIE 為標竿 100 分示範)
         const DEFAULT_DATA = {
             basicInfo: {
                 courseName: '外籍看護居家照顧華語溝通實務班', industry: '重點缺工產業-長照與跨國勞動力', level: '2', hours: 32,
                 targetAudience: '由仲介機構或雇主推薦，甫入台或有在職進修需求之外籍家庭看護工(印尼、越南為主)', competencyCode: 'HRM4301-001 (跨國勞動力仲介從業人員) 及 長照基準',
+                competencyName: '跨國勞動力仲介從業人員（居家照顧溝通職能）', occupationCategory: '個人及社會服務業－居家式長期照顧服務／家庭看護工',
             },
             proposalDetails: {
                 background: '一、社會環境與產業缺口 (SDGs對接)\n臺灣邁入超高齡社會，依據國家發展委員會推估，至 2026 年老年人口將突破 21%。在少子化與家庭結構改變的衝擊下，外籍家庭看護工已成為我國長照體系核心人力。本計畫響應 SDGs 3 (健康與福祉) 及勞動部「移工留用政策」，致力提升照護品質。\n\n二、實務痛點分析\n多數外籍看護工初次入臺時，常面臨「聽不懂雇主指令」、「無法準確傳達生理需求」及「無法正確辨識醫療資訊」等三大挑戰，衍生照護疏失甚至醫患糾紛。\n\n三、對接政策與職能\n本計畫深入對接「跨國勞動力仲介從業人員」職能基準。透過 iCAP 發展模式，精準萃取第一線居家照護所需之「華語溝通實務職能」，解決日常照護與緊急應變之溝通痛點。',
                 objectives: '【質化目標】\n1. 建構標準化教學模組：開發符合 iCAP 規範之「做中學」雙語教材，並建立客觀之情境實作評量機制，翻轉傳統填鴨式語文教學。\n2. 數位輔助學習：開發線上情境聽力模擬音檔(QR Code)，突破時空限制，提升學習留存率。\n3. 提升跨文化適應力：協助外籍看護理解臺灣家庭照護文化，減少勞雇摩擦。\n\n【量化目標】\n1. 課程開發：完成 32 小時職能導向課程大綱、多媒體教材及評量工具開發。\n2. 試辦教學：預計於 115 年第 3 季辦理 1 場次試辦教學，培育至少 20 名外籍看護。\n3. 學習成效：參訓學員結訓實作評量（L2）通過率達 80% 以上；學員滿意度（L1）平均達 4.0 分（滿分 5 分）以上方為達標。',
                 benefits: '一、 對參訓學員：\n降低語言焦慮，提升在臺工作適應力。具備基礎照護華語能力，能正確執行指令，並強化緊急狀況應變能力，保障自身及被照顧者安全。\n\n二、 對雇主家庭：\n減少溝通不良產生之誤解。確保被照顧者之生理需求能被正確處理，提升居家照護品質，減輕家屬壓力。\n\n三、 對產業發展與社會：\n提供一套具國家公信力（iCAP 認證）之訓練模組。響應政府「留用優秀外國中階技術人力」政策，穩定長照人力供給，帶動整體產業服務品質升級。',
                 prerequisites: '1. 基本條件：已合法入臺，並從事家庭看護工作滿一個月以上者。\n2. 語言能力：具備基礎母語（印尼語或越南語）讀寫能力，無須具備華語基礎。\n3. 實務經驗：具備基礎居家照護經驗者。\n4. 報名管道：透過直聘中心、仲介公司推薦，或雇主同意放假參訓者優先錄取。',
+                policyBasis: '一、法規依據：\n1.《發展職能基準及職能導向課程補助要點》。\n2.《就業服務法》第 46 條、《外國人從事就業服務法所定工作資格及審查標準》——移工留才久用方案。\n二、政策依據：\n1. 勞動部「移工留才久用方案」（2022 起），開放符合資格之外籍看護轉任中階技術人力。\n2. 衛福部《長期照顧十年計畫 2.0》人力布建與 SDGs 3（健康與福祉）、SDGs 8（合適工作）。',
+                industryDemandEvidence: '【需求佐證，三類證據可追溯原始來源】\n一、政策方向：國家發展委員會人口推估，2026 年老年人口將破 21%（超高齡社會）。\n二、人力統計：勞動部統計外籍家庭看護工約 22 萬人，為長照第一線核心人力；仲介公會調查指出「語言溝通」為勞雇爭議前三大成因。\n三、產業痛點（量化+質化）：本案問卷（N=126，回收率 84%）顯示 78% 雇主反映「指令聽不懂」、65% 反映「無法轉述醫囑」；並經產官學勞焦點小組（3 場）共識確認為關鍵痛點。',
+                applicationBenefit: '一、應用方式：本職能溝通內涵將應用於（1）iCAP 職能導向課程與職前訓練、（2）仲介機構在職教育訓練、（3）雇主家庭媒合前說明。\n二、應用單位：直聘中心、跨國人力仲介公會會員、長照機構與居服單位。\n三、影響人數規模：初期以年培訓 20 人試辦，3 年內透過仲介體系推廣，預估可影響在臺外籍看護與雇主家庭逾 5,000 人次。',
+                analysisMethod: '一、方法選擇與理由：採 DACUM（Developing A Curriculum）職能分析法，因其適合以第一線實務專家共識萃取工作任務與行為指標，符合服務型職類特性。\n二、流程步驟：(1) 文獻與現況分析 → (2) DACUM 焦點小組工作坊 → (3) 工作任務/職能內涵初稿 → (4) 專家問卷驗證 → (5) 修訂定稿。\n三、工具設計：設計 DACUM 引導表、半結構訪談題綱與職能內涵驗證問卷（Likert 5 點）。',
+                stakeholders: '一、利益關係人組成：產（仲介/長照機構主管）、官（勞政/衛政代表）、學（照顧服務與應華教學學者）、勞（資深外籍看護與本國居服員）共 12 人。\n二、代表性：具 3 年以上實務經驗者 8 人（占 67%，達 6 成門檻），兼顧大型機構與小型居家服務不同規模。\n三、佐證：附協力單位邀請函、簽到簿、焦點小組會議紀錄與相片。',
+                verification: '一、驗證方法：以專家問卷（N=32）就職能內涵之重要性與適切性進行 Likert 5 點評分，並計算內容效度比（CVR）。\n二、驗證結果：各職能內涵項目平均得分 ≥ 4.2，CVR ≥ 0.6，顯示具內容效度且為產業所需。\n三、依結果調整：刪除重疊之 2 項任務、合併相近行為指標，並依專家建議補入「緊急通報」內涵，留有修訂對照紀錄。',
+                kpi: '【量化 KPI 與達標門檻】\n1. 課程開發：完成 32 小時課綱、教材與評量工具（達成率 100%）。\n2. 試辦培訓：辦理 1 場次、招訓 ≥ 20 人，出席率 ≥ 90%。\n3. 學習成效：結訓實作評量（L2）通過率 ≥ 80%；滿意度（L1）平均 ≥ 4.0/5。\n4. 應用擴散：1 年內至少 3 家仲介/居服單位採用本課程。',
             },
             addie: exemplarAddie(),
             syllabus: [
-                { unit: '單元一：居家生活與身體照顧溝通', hours: 10, method: '講述法、雙語圖卡配對、角色扮演', objective: '能使用基礎華語與受照顧者進行日常起居與餐飲餵食之互動溝通。', indicators: '1. 能正確聽懂並說出 15 種以上日常照顧動作中文(如:翻身、拍背、上廁所)。\n2. 能聽懂並正確執行受照顧者表達的立即性生理需求指令(如:口渴拿水、疼痛指認)。\n3. 能正確使用華語回答受照顧者關於飲食喜好與飽足感的提問。' },
-                { unit: '單元二：就醫配合與醫囑聽解', hours: 8, method: '講述法、實物展示(藥袋)、情境模擬', objective: '能聽懂醫院診間的基本護理衛教，並正確識別中文藥袋資訊。', indicators: '1. 能正確圈選/指出藥袋上「飯前、飯後、睡前」與「服藥劑量」等關鍵字。\n2. 能聽懂並正確操作護理人員指示之傷口照護動作(如:擦藥膏、貼紗布)。\n3. 能向雇主正確轉述(或利用圖卡指認)醫師診斷的主要病況(如:發燒、血壓高)。' },
-                { unit: '單元三：突發狀況與緊急通報', hours: 8, method: '情境模擬、電話實作演練', objective: '在面臨跌倒、昏迷等居家緊急事件時，能利用電話進行有效求救。', indicators: '1. 能在模擬情境中正確撥打 119，並於 5 秒內用華語報出完整居家地址。\n2. 能清晰口述受照顧者當前意識狀態與傷勢(包含部位與症狀，如:頭流血、叫不醒)。\n3. 能在線上聽懂並正確配合 119 勤務中心人員之初步急救動作指示(如:不要移動患者)。' },
-                { unit: '單元四：台華語常用詞彙與文化適應', hours: 6, method: '講述法、小組互動、影片賞析', objective: '能辨識臺灣家庭常用的基本照顧台語詞彙，降低跨文化溝通障礙。', indicators: '1. 能聽懂並正確配對 20 個常見台語照顧詞彙的華語圖卡(如:食飽未、痛、食藥仔)。\n2. 能在實境演練中，主動使用基本禮貌性客套語向雇主打招呼或表達感謝。' }
+                { unit: '單元一：居家生活與身體照顧溝通', hours: 10, method: '講述法、雙語圖卡配對、角色扮演', competencyUnit: 'CU1 日常生活照顧溝通（職能級別 2）', objective: '能使用基礎華語與受照顧者進行日常起居與餐飲餵食之互動溝通。', indicators: '1. 能正確聽懂並說出 15 種以上日常照顧動作中文(如:翻身、拍背、上廁所)。\n2. 能聽懂並正確執行受照顧者表達的立即性生理需求指令(如:口渴拿水、疼痛指認)。\n3. 能正確使用華語回答受照顧者關於飲食喜好與飽足感的提問。' },
+                { unit: '單元二：就醫配合與醫囑聽解', hours: 8, method: '講述法、實物展示(藥袋)、情境模擬', competencyUnit: 'CU2 醫療照護資訊聽解（職能級別 2）', objective: '能聽懂醫院診間的基本護理衛教，並正確識別中文藥袋資訊。', indicators: '1. 能正確圈選/指出藥袋上「飯前、飯後、睡前」與「服藥劑量」等關鍵字。\n2. 能聽懂並正確操作護理人員指示之傷口照護動作(如:擦藥膏、貼紗布)。\n3. 能向雇主正確轉述(或利用圖卡指認)醫師診斷的主要病況(如:發燒、血壓高)。' },
+                { unit: '單元三：突發狀況與緊急通報', hours: 8, method: '情境模擬、電話實作演練', competencyUnit: 'CU3 緊急事件通報與應變（職能級別 2）', objective: '在面臨跌倒、昏迷等居家緊急事件時，能利用電話進行有效求救。', indicators: '1. 能在模擬情境中正確撥打 119，並於 5 秒內用華語報出完整居家地址。\n2. 能清晰口述受照顧者當前意識狀態與傷勢(包含部位與症狀，如:頭流血、叫不醒)。\n3. 能在線上聽懂並正確配合 119 勤務中心人員之初步急救動作指示(如:不要移動患者)。' },
+                { unit: '單元四：台華語常用詞彙與文化適應', hours: 6, method: '講述法、小組互動、影片賞析', competencyUnit: 'CU4 跨文化溝通與職場適應（職能級別 2）', objective: '能辨識臺灣家庭常用的基本照顧台語詞彙，降低跨文化溝通障礙。', indicators: '1. 能聽懂並正確配對 20 個常見台語照顧詞彙的華語圖卡(如:食飽未、痛、食藥仔)。\n2. 能在實境演練中，主動使用基本禮貌性客套語向雇主打招呼或表達感謝。' }
             ],
             budgetItems: [
                 { id: 1, category: '人事費', name: '專案助理薪資 (負責會議紀錄/教材校對/行政試辦) 1人x3個月', amount: 105000 },
@@ -292,7 +445,8 @@
                 { id: 5, category: '教材與印刷費', name: '情境字卡(含刀模)與彩色講義大宗印刷 (附廠商三聯發票)', amount: 110000 },
                 { id: 6, category: '多媒體製作費', name: '線上看護聽力數位影片與音檔開發 (委外發包)', amount: 550000 },
                 { id: 7, category: '場地與行政費', name: '無障礙實境模擬場地租借、雙語問卷印刷、郵電', amount: 53500 },
-            ]
+            ],
+            selfCheck: {},
         };
 
         // ------------------------------------------------------------------
@@ -509,7 +663,7 @@
 
         // 對應品質指標標籤（indicator id + 短標題），關鍵指標以紅點標示
         const IndicatorTag = ({ id }) => {
-            const ind = RUBRIC_INDICATORS[id];
+            const ind = ALL_INDICATORS[id];
             if (!ind) return null;
             return (
                 <span title={ind.dim + '｜' + (ind.critical ? '關鍵指標' : '一般指標')} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 align-middle">
@@ -532,6 +686,7 @@
             const [addie, setAddie] = useState(DEFAULT_DATA.addie);
             const [syllabus, setSyllabus] = useState(DEFAULT_DATA.syllabus);
             const [budgetItems, setBudgetItems] = useState(DEFAULT_DATA.budgetItems);
+            const [selfCheck, setSelfCheck] = useState(DEFAULT_DATA.selfCheck || {});
             const [checklist, setChecklist] = useState({
                 ttqs: true, experts: true, bilingual: true, noEquipment: true, rubric: true, independentAcc: false
             });
@@ -605,7 +760,7 @@
                 if (!versionName.trim()) { alert('請輸入版本名稱！'); return; }
                 setConnStatus({ loading: true, message: '資料寫入 Google Sheet 中...', error: false });
 
-                const currentData = { basicInfo, proposalDetails, addie, syllabus, budgetItems };
+                const currentData = { basicInfo, proposalDetails, addie, syllabus, budgetItems, selfCheck };
 
                 callGas({ action: 'save', name: versionName, data: currentData })
                     .then(data => {
@@ -625,11 +780,12 @@
             const loadVersion = (version) => {
                 if (window.confirm(`確定要從雲端載入 [${version.name}] 嗎？這將覆蓋當前畫面。`)) {
                     const d = version.data || {};
-                    setBasicInfo(d.basicInfo || DEFAULT_DATA.basicInfo);
-                    setProposalDetails(d.proposalDetails || DEFAULT_DATA.proposalDetails);
+                    setBasicInfo(normalizeBasicInfo(d.basicInfo)); // 補齊新欄位，舊存檔仍可載入
+                    setProposalDetails(normalizeProposal(d.proposalDetails));
                     setAddie(normalizeAddie(d.addie)); // 相容舊版字串型 addie
-                    setSyllabus(Array.isArray(d.syllabus) ? d.syllabus : DEFAULT_DATA.syllabus);
-                    setBudgetItems(Array.isArray(d.budgetItems) ? d.budgetItems : DEFAULT_DATA.budgetItems);
+                    setSyllabus(Array.isArray(d.syllabus) ? normalizeSyllabus(d.syllabus) : DEFAULT_DATA.syllabus);
+                    setBudgetItems(Array.isArray(d.budgetItems) ? normalizeBudget(d.budgetItems) : DEFAULT_DATA.budgetItems);
+                    setSelfCheck(normalizeSelfCheck(d.selfCheck));
                     setConnStatus({ loading: false, message: `已載入版本：${version.name}`, error: false });
                 }
             };
@@ -658,6 +814,19 @@
                 const isPersonnelValid = personnelRatio <= (1/3);
                 return { total, subsidy, selfFund, personnelTotal, personnelRatio, isPersonnelValid };
             }, [budgetItems]);
+
+            // 品質自評表：即時彙整 36 項指標並自動引用目前計畫內容
+            const selfEval = useMemo(
+                () => computeSelfEval({ basicInfo, proposalDetails, addie, syllabus, budgetItems }),
+                [basicInfo, proposalDetails, addie, syllabus, budgetItems]
+            );
+            // 自評分數（依 met/partial/unmet 加權）與覆蓋率
+            const selfEvalScore = useMemo(() => {
+                if (!selfEval.total) return 0;
+                const sum = selfEval.all.reduce((s, r) => s + statusMeta(effectiveStatus(selfCheck, r)).score, 0);
+                return Math.round(sum / selfEval.total * 100);
+            }, [selfEval, selfCheck]);
+            const setSelfStatus = (id, value) => setSelfCheck(prev => ({ ...prev, [id]: value }));
 
             // 表單操作處理
             const handleBudgetChange = (id, field, value) => {
@@ -881,6 +1050,76 @@
                 </button>
             );
 
+            // 自評狀態顏色
+            const statusColor = { met: 'text-emerald-700 bg-emerald-50 border-emerald-300', partial: 'text-amber-700 bg-amber-50 border-amber-300', unmet: 'text-rose-700 bg-rose-50 border-rose-300' };
+            const clip = (s, n) => { s = String(s || ''); return s.length > (n || 220) ? s.slice(0, n || 220) + '…' : s; };
+
+            // 品質自評表（Tab 7 螢幕編輯 + 企劃預覽列印最後一頁共用）
+            const SelfEvalReport = ({ printMode }) => (
+                <div className={printMode ? 'text-gray-900' : ''}>
+                    <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 mb-5 ${printMode ? '' : ''}`}>
+                        <div className="border border-gray-300 rounded-lg p-3 text-center bg-gray-50">
+                            <div className="text-2xl font-black text-indigo-700">{selfEval.total}</div>
+                            <div className="text-[11px] text-gray-500">品質指標總項數（課程 15＋OCS 21）</div>
+                        </div>
+                        <div className="border border-gray-300 rounded-lg p-3 text-center bg-gray-50">
+                            <div className={`text-2xl font-black ${selfEval.coverage === 100 ? 'text-emerald-600' : 'text-indigo-700'}`}>{selfEval.coverage}%</div>
+                            <div className="text-[11px] text-gray-500">內容覆蓋率（已引用 {selfEval.filledCount}/{selfEval.total}）</div>
+                        </div>
+                        <div className="border border-gray-300 rounded-lg p-3 text-center bg-gray-50">
+                            <div className={`text-2xl font-black ${selfEvalScore === 100 ? 'text-emerald-600' : 'text-indigo-700'}`}>{selfEvalScore}<span className="text-sm">分</span></div>
+                            <div className="text-[11px] text-gray-500">自評分數（符合1／部分0.5／未符合0）</div>
+                        </div>
+                        <div className="border border-gray-300 rounded-lg p-3 text-center bg-gray-50">
+                            <div className="text-2xl font-black text-gray-700">{selfEval.all.filter(r => r.critical && effectiveStatus(selfCheck, r) !== 'met').length}</div>
+                            <div className="text-[11px] text-gray-500">關鍵指標尚未符合（高風險補正）</div>
+                        </div>
+                    </div>
+                    {selfEval.groups.map(g => (
+                        <div key={g.key} className="mb-6">
+                            <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-2 text-base">{g.label}</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full border-collapse border border-gray-500 text-[12px] self-eval-table">
+                                    <thead className="bg-gray-100">
+                                        <tr>
+                                            <th className="border border-gray-500 p-2 text-left w-[9%]">指標</th>
+                                            <th className="border border-gray-500 p-2 text-left w-[19%]">指標標題／審查重點</th>
+                                            <th className="border border-gray-500 p-2 text-left w-[16%]">對應本案欄位</th>
+                                            <th className="border border-gray-500 p-2 text-left w-[42%]">自動引用本案內容（佐證摘要）</th>
+                                            <th className="border border-gray-500 p-2 text-center w-[14%]">自評狀態</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {g.rows.map(r => {
+                                            const eff = effectiveStatus(selfCheck, r);
+                                            return (
+                                            <tr key={r.id} className="align-top">
+                                                <td className="border border-gray-500 p-2 font-mono font-bold whitespace-nowrap">
+                                                    {r.id}{r.critical && <span className="ml-1 text-rose-600" title="關鍵指標">●</span>}
+                                                    <div className="text-[10px] font-sans font-normal text-gray-400">{r.dim}</div>
+                                                </td>
+                                                <td className="border border-gray-500 p-2"><div className="font-semibold">{r.title}</div><div className="text-[11px] text-gray-500 mt-0.5">審查重點：{r.focus}</div></td>
+                                                <td className="border border-gray-500 p-2 text-gray-600">{r.field}</td>
+                                                <td className="border border-gray-500 p-2 whitespace-pre-line leading-relaxed">
+                                                    {r.filled ? clip(r.evidence, 240) : <span className="text-rose-500 font-semibold">（未填，建議補正）</span>}
+                                                </td>
+                                                <td className="border border-gray-500 p-2 text-center">
+                                                    <select value={eff} onChange={e => setSelfStatus(r.id, e.target.value)} className={`no-print text-xs font-bold rounded border px-1.5 py-1 outline-none ${statusColor[eff]}`}>
+                                                        {SELF_CHECK_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                                    </select>
+                                                    <span className={`print-only font-bold ${eff === 'met' ? 'text-emerald-700' : eff === 'partial' ? 'text-amber-700' : 'text-rose-700'}`}>{statusMeta(eff).label}</span>
+                                                </td>
+                                            </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            );
+
             return (
                 <div className="min-h-screen p-4 md:p-8">
                     <div className="max-w-6xl mx-auto space-y-6">
@@ -957,7 +1196,8 @@
                                 <TabButton id="syllabus" iconClass="fa-solid fa-graduation-cap" label="3. 課綱與指標" />
                                 <TabButton id="budget" iconClass="fa-solid fa-calculator" label="4. 經費編列" />
                                 <TabButton id="audit" iconClass="fa-solid fa-list-check" label="5. 核銷稽核" />
-                                <TabButton id="preview" iconClass="fa-solid fa-print" label="6. 企劃預覽與列印" />
+                                <TabButton id="selfeval" iconClass="fa-solid fa-clipboard-check" label="6. 品質自評表" />
+                                <TabButton id="preview" iconClass="fa-solid fa-print" label="7. 企劃預覽與列印" />
                             </div>
 
                             <div className="p-6">
@@ -968,18 +1208,79 @@
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div><label className="block text-sm font-semibold text-gray-700 mb-1">課程名稱</label><input type="text" value={basicInfo.courseName} onChange={e => setBasicInfo({...basicInfo, courseName: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
                                         <div><label className="block text-sm font-semibold text-gray-700 mb-1">對接產業類別</label><input type="text" value={basicInfo.industry} onChange={e => setBasicInfo({...basicInfo, industry: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
-                                        <div><label className="block text-sm font-semibold text-gray-700 mb-1">對接之國家職能基準 (代碼與任務)</label><input type="text" value={basicInfo.competencyCode} onChange={e => setBasicInfo({...basicInfo, competencyCode: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" /></div>
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">職能基準名稱</label><RequiredBadge required={true} /><IndicatorTag id="A-1" /><IndicatorTag id="3.1" /></div>
+                                            <input type="text" value={basicInfo.competencyName} onChange={e => setBasicInfo({...basicInfo, competencyName: e.target.value})} placeholder="如：跨國勞動力仲介從業人員（居家照顧溝通職能）" className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">對接之國家職能基準 (代碼與任務)</label><RequiredBadge required={true} /><IndicatorTag id="A-1" /></div>
+                                            <input type="text" value={basicInfo.competencyCode} onChange={e => setBasicInfo({...basicInfo, competencyCode: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">對應職類／職業別</label><RequiredBadge required={true} /><IndicatorTag id="3.2.1" /></div>
+                                            <input type="text" value={basicInfo.occupationCategory} onChange={e => setBasicInfo({...basicInfo, occupationCategory: e.target.value})} placeholder="如：個人及社會服務業－居家式長期照顧服務／家庭看護工" className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                                        </div>
                                         <div className="flex gap-4">
                                             <div className="flex-1"><label className="block text-sm font-semibold text-gray-700 mb-1">iCAP 職能級別</label><select value={basicInfo.level} onChange={e => setBasicInfo({...basicInfo, level: e.target.value})} className="w-full p-2.5 border rounded-lg bg-gray-50"><option value="1">第 1 級</option><option value="2">第 2 級 (基礎實務)</option><option value="3">第 3 級 (獨立作業/高額獎勵)</option><option value="4">第 4 級</option></select></div>
                                             <div className="flex-1"><label className="block text-sm font-semibold text-gray-700 mb-1">總授課時數</label><input type="number" value={basicInfo.hours} onChange={e => setBasicInfo({...basicInfo, hours: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg bg-gray-50" /></div>
                                         </div>
                                         <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">招生目標受眾 (Target Audience)</label><input type="text" value={basicInfo.targetAudience} onChange={e => setBasicInfo({...basicInfo, targetAudience: e.target.value})} className="w-full p-2.5 border rounded-lg bg-gray-50" /></div>
 
-                                        <div className="md:col-span-2 border-t-2 border-gray-100 pt-6 mt-2"><h3 className="text-md font-bold text-gray-800 mb-4">企劃書核心章節撰寫</h3></div>
-                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">計畫緣起與背景</label><textarea rows="4" value={proposalDetails.background} onChange={e => setProposalDetails({...proposalDetails, background: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
-                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">計畫具體目標 (質化與量化)</label><textarea rows="3" value={proposalDetails.objectives} onChange={e => setProposalDetails({...proposalDetails, objectives: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
-                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">參訓先備條件</label><textarea rows="2" value={proposalDetails.prerequisites} onChange={e => setProposalDetails({...proposalDetails, prerequisites: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
-                                        <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-700 mb-1">專案預期效益</label><textarea rows="3" value={proposalDetails.benefits} onChange={e => setProposalDetails({...proposalDetails, benefits: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" /></div>
+                                        <div className="md:col-span-2 border-t-2 border-gray-100 pt-6 mt-2">
+                                            <h3 className="text-md font-bold text-gray-800 mb-1">企劃書核心章節撰寫</h3>
+                                            <p className="text-xs text-gray-500">欄名旁標籤為對應之品質認證審查指標（課程 ADDIE 與 OCS 職能基準）；<span className="text-rose-600 font-bold">必填</span>欄位為通過關鍵。內容將自動帶入「品質自評表」作為佐證。</p>
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">計畫緣起與背景</label><RequiredBadge required={true} /><IndicatorTag id="A-2" /><IndicatorTag id="3.2.1" /></div>
+                                            <textarea rows="4" value={proposalDetails.background} onChange={e => setProposalDetails({...proposalDetails, background: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">依據政策與法規</label><RequiredBadge required={true} /><IndicatorTag id="1.1.1" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：引用具公信力之政策方向、法規名稱與條號，且可追溯原始出處。</p>
+                                            <textarea rows="3" value={proposalDetails.policyBasis} onChange={e => setProposalDetails({...proposalDetails, policyBasis: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">產業與勞動力需求佐證</label><RequiredBadge required={true} /><IndicatorTag id="1.1.1" /><IndicatorTag id="1.1.2" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：需連結「政策、法規、人力統計」三類證據；職業重要性至少兩項（公共安全/法規、人才缺口等），並附量化＋質化來源。</p>
+                                            <textarea rows="4" value={proposalDetails.industryDemandEvidence} onChange={e => setProposalDetails({...proposalDetails, industryDemandEvidence: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">職能分析方法與流程</label><RequiredBadge required={true} /><IndicatorTag id="2.1.1" /><IndicatorTag id="2.1.2" /><IndicatorTag id="2.2.1" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：說明所選分析方法（如 DACUM）之理由、循序流程步驟與對應設計之工具（問卷/訪談題綱）。</p>
+                                            <textarea rows="4" value={proposalDetails.analysisMethod} onChange={e => setProposalDetails({...proposalDetails, analysisMethod: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">利益關係人／專家參與代表性</label><RequiredBadge required={true} /><IndicatorTag id="2.2.3" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：具實務經驗者需達 3 年以上資深占 6 成以上，兼顧不同規模組織，並留簽到、會議紀錄佐證。</p>
+                                            <textarea rows="3" value={proposalDetails.stakeholders} onChange={e => setProposalDetails({...proposalDetails, stakeholders: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">職能內涵驗證方法與結果</label><RequiredBadge required={true} /><IndicatorTag id="2.3.2" /><IndicatorTag id="2.3.3" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：說明驗證方法/樣本、信效度結果（如 CVR），以及依驗證結果之調整紀錄。</p>
+                                            <textarea rows="3" value={proposalDetails.verification} onChange={e => setProposalDetails({...proposalDetails, verification: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">計畫具體目標 (質化與量化)</label><RequiredBadge required={true} /><IndicatorTag id="D-1" /></div>
+                                            <textarea rows="3" value={proposalDetails.objectives} onChange={e => setProposalDetails({...proposalDetails, objectives: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">預期效益量化 KPI 與達標門檻</label><RequiredBadge required={true} /><IndicatorTag id="E-2" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：以可量測門檻表述（通過率、滿意度、出席率、擴散單位數），避免僅有質化描述。</p>
+                                            <textarea rows="3" value={proposalDetails.kpi} onChange={e => setProposalDetails({...proposalDetails, kpi: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">職能基準應用方式與影響人數規模</label><RequiredBadge required={true} /><IndicatorTag id="1.2.1" /><IndicatorTag id="1.2.2" /><IndicatorTag id="1.2.3" /></div>
+                                            <p className="text-xs text-gray-400 mb-1.5"><i className="fa-solid fa-lightbulb text-amber-400 mr-1"></i>紅隊隊長：具體可行之應用方式、未來應用單位機構，並預估影響人數規模。</p>
+                                            <textarea rows="3" value={proposalDetails.applicationBenefit} onChange={e => setProposalDetails({...proposalDetails, applicationBenefit: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">參訓先備條件</label><RequiredBadge required={true} /><IndicatorTag id="A-2" /></div>
+                                            <textarea rows="2" value={proposalDetails.prerequisites} onChange={e => setProposalDetails({...proposalDetails, prerequisites: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap"><label className="block text-sm font-semibold text-gray-700">專案預期效益</label><RequiredBadge required={true} /><IndicatorTag id="1.2.1" /></div>
+                                            <textarea rows="3" value={proposalDetails.benefits} onChange={e => setProposalDetails({...proposalDetails, benefits: e.target.value})} className="w-full p-3 border rounded-lg text-sm bg-gray-50" />
+                                        </div>
                                     </div>
                                 </div>
                                 )}
@@ -1121,6 +1422,11 @@
                                 {activeTab === 'syllabus' && (
                                 <div className="space-y-6 animate-in fade-in">
                                     <h2 className="text-lg font-bold text-gray-800 border-b-2 border-gray-100 pb-2">單元課綱與行為指標設定</h2>
+                                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-sm text-indigo-900 flex flex-wrap items-center gap-2">
+                                        <span className="font-bold">對應指標：</span>
+                                        <IndicatorTag id="D-2" /><IndicatorTag id="A-3" /><IndicatorTag id="D-1" /><IndicatorTag id="3.3.2" /><IndicatorTag id="3.4.2" /><IndicatorTag id="3.4.3" />
+                                        <span className="text-xs text-indigo-700 w-full mt-1">課綱單元須含「對應職能單元／級別」與「可評量行為指標」，方能追溯 CU—課程—職能級別（A-3 / 3.4.3）並作為結訓檢核依據。</span>
+                                    </div>
                                     <div className="space-y-6">
                                         {syllabus.map((unit, index) => (
                                             <div key={index} className="p-5 border rounded-xl bg-gray-50 border-gray-200 space-y-4 shadow-sm relative overflow-hidden">
@@ -1129,6 +1435,7 @@
                                                     <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-600 mb-1">單元名稱</label><input type="text" value={unit.unit} onChange={e => handleSyllabusChange(index, 'unit', e.target.value)} className="w-full p-2 bg-white border rounded-lg text-sm" /></div>
                                                     <div><label className="block text-xs font-bold text-gray-600 mb-1">時數 / 教學法</label><div className="flex gap-2"><input type="number" value={unit.hours} onChange={e => handleSyllabusChange(index, 'hours', Number(e.target.value))} className="w-16 p-2 bg-white border rounded-lg text-sm text-center" /><input type="text" value={unit.method} onChange={e => handleSyllabusChange(index, 'method', e.target.value)} className="flex-1 p-2 bg-white border rounded-lg text-sm" /></div></div>
                                                 </div>
+                                                <div><label className="block text-xs font-bold text-gray-600 mb-1"><i className="fa-solid fa-diagram-project text-indigo-400 mr-1"></i>對應職能單元／級別 (CU → 課程 → 職能級別)</label><input type="text" value={unit.competencyUnit} onChange={e => handleSyllabusChange(index, 'competencyUnit', e.target.value)} placeholder="如：CU1 日常生活照顧溝通（職能級別 2）" className="w-full p-2 bg-white border border-indigo-200 rounded-lg text-sm" /></div>
                                                 <div><label className="block text-xs font-bold text-gray-600 mb-1">單元教學目標</label><input type="text" value={unit.objective} onChange={e => handleSyllabusChange(index, 'objective', e.target.value)} className="w-full p-2 bg-white border rounded-lg text-sm" /></div>
                                                 <div><label className="block text-xs font-bold text-gray-600 mb-1 text-blue-800">對應之「可評量」行為指標 (一列一個，對應至結訓檢核表)</label><textarea rows={3} value={unit.indicators} onChange={e => handleSyllabusChange(index, 'indicators', e.target.value)} className="w-full p-3 bg-white border border-blue-200 rounded-lg text-sm text-blue-900 focus:ring-2 focus:ring-blue-500 outline-none" /></div>
                                             </div>
@@ -1140,6 +1447,10 @@
                                 {/* Tab 4: 經費編列 */}
                                 {activeTab === 'budget' && (
                                 <div className="space-y-6 animate-in fade-in">
+                                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 flex gap-3">
+                                        <i className="fa-solid fa-scale-balanced text-amber-600 text-lg mt-0.5"></i>
+                                        <div>經費編列依據<strong>《發展職能基準及職能導向課程補助要點》</strong>與主計核銷規定（實支實付、人事費上限 1/3、禁列資本門設備、專款專戶三專分帳）。此屬<strong>法規/核銷遵循</strong>，非 ADDIE／OCS 品質指標範疇；核銷佐證請於「5. 核銷稽核」自我勾稽。</div>
+                                    </div>
                                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                                     <div className="xl:col-span-2 space-y-4">
                                         <div className="flex justify-between items-center">
@@ -1210,10 +1521,25 @@
                                     </div>
                                 </div>
                                 )}
+
+                                {/* Tab 6: 品質自評表（螢幕可編輯自評狀態；列印版於預覽頁最後一頁呈現） */}
+                                {activeTab === 'selfeval' && (
+                                <div className="space-y-4 animate-in fade-in">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-xl p-5">
+                                        <div>
+                                            <h2 className="text-lg font-black text-gray-800 flex items-center gap-2"><i className="fa-solid fa-clipboard-check text-emerald-600"></i> 品質認證自評表（課程 ADDIE 15＋OCS 21＝36 項）</h2>
+                                            <p className="text-xs text-gray-500 mt-1 leading-relaxed">每項指標自動<strong>引用本案目前欄位內容</strong>作為佐證；空白者顯示「（未填，建議補正）」。可逐項調整自評狀態（符合／部分符合／未符合）。此表已納入「企劃預覽與列印」之<strong>最後一頁</strong>，列印計畫書時一併輸出。</p>
+                                        </div>
+                                        <button onClick={() => setActiveTab('preview')} className="text-sm font-bold px-4 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition flex items-center gap-2 shrink-0"><i className="fa-solid fa-print"></i> 前往預覽列印</button>
+                                    </div>
+                                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-amber-900 text-sm flex gap-3"><i className="fa-solid fa-triangle-exclamation text-xl shrink-0 mt-0.5 text-amber-600"></i><div>紅隊隊長提醒：關鍵指標（●）任一未達即列為<strong>高風險補正</strong>。請於「1. 基本設定」補齊企劃欄位、於「2. ADDIE 發展」補齊各階段內容，覆蓋率與自評分數會即時更新。</div></div>
+                                    <SelfEvalReport printMode={false} />
+                                </div>
+                                )}
                             </div>
                         </div>
 
-                        {/* Tab 6: 企劃預覽與列印 */}
+                        {/* Tab 7: 企劃預覽與列印 */}
                         {activeTab === 'preview' && (
                         <div className="space-y-6 animate-in fade-in">
                             <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-5 rounded-xl border border-blue-200 shadow-sm no-print gap-4 border-l-4 border-l-blue-500">
@@ -1250,10 +1576,28 @@
                                                 <h3 className="font-bold mb-2 text-lg">一、 計畫緣起與產業痛點需求</h3>
                                                 <p className="text-justify leading-8 text-[15px] whitespace-pre-line">{proposalDetails.background}</p>
                                             </div>
+                                            {String(proposalDetails.policyBasis || '').trim() && (
                                             <div>
-                                                <h3 className="font-bold mb-2 text-lg">二、 計畫具體目標</h3>
+                                                <h3 className="font-bold mb-2 text-lg">二、 依據政策與法規</h3>
+                                                <p className="text-justify leading-8 text-[15px] whitespace-pre-line">{proposalDetails.policyBasis}</p>
+                                            </div>
+                                            )}
+                                            {String(proposalDetails.industryDemandEvidence || '').trim() && (
+                                            <div>
+                                                <h3 className="font-bold mb-2 text-lg">三、 產業與勞動力需求佐證</h3>
+                                                <p className="text-justify leading-8 text-[15px] whitespace-pre-line">{proposalDetails.industryDemandEvidence}</p>
+                                            </div>
+                                            )}
+                                            <div>
+                                                <h3 className="font-bold mb-2 text-lg">四、 計畫具體目標</h3>
                                                 <p className="text-justify leading-8 text-[15px] whitespace-pre-line ml-4 bg-gray-50 p-4 border border-gray-200">{proposalDetails.objectives}</p>
                                             </div>
+                                            {String(proposalDetails.kpi || '').trim() && (
+                                            <div>
+                                                <h3 className="font-bold mb-2 text-lg">五、 預期效益量化 KPI 與達標門檻</h3>
+                                                <p className="text-justify leading-8 text-[15px] whitespace-pre-line ml-4 bg-gray-50 p-4 border border-gray-200">{proposalDetails.kpi}</p>
+                                            </div>
+                                            )}
                                         </div>
                                     </section>
 
@@ -1264,7 +1608,9 @@
                                             <tbody>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold w-[25%] text-center">課程名稱</td><td className="border border-gray-400 p-4 font-bold text-blue-900">{basicInfo.courseName}</td></tr>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">對接產業類別</td><td className="border border-gray-400 p-4">{basicInfo.industry}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">職能基準名稱</td><td className="border border-gray-400 p-4">{basicInfo.competencyName}</td></tr>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">對接國家職能基準</td><td className="border border-gray-400 p-4">{basicInfo.competencyCode}</td></tr>
+                                            <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">對應職類／職業別</td><td className="border border-gray-400 p-4">{basicInfo.occupationCategory}</td></tr>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">iCAP 職能級別</td><td className="border border-gray-400 p-4">第 {basicInfo.level} 級</td></tr>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">總授課時數</td><td className="border border-gray-400 p-4">{basicInfo.hours} 小時</td></tr>
                                             <tr><td className="border border-gray-400 p-4 bg-gray-50 font-bold text-center">目標招生對象</td><td className="border border-gray-400 p-4">{basicInfo.targetAudience}</td></tr>
@@ -1305,6 +1651,22 @@
                                                 </div>
                                                 );
                                             })}
+                                            {(String(proposalDetails.analysisMethod || '').trim() || String(proposalDetails.stakeholders || '').trim() || String(proposalDetails.verification || '').trim()) && (
+                                            <div>
+                                                <h3 className="font-bold text-blue-900 border-b-2 border-blue-200 pb-1 mb-3 text-lg">六、 職能分析方法、利益關係人與驗證（OCS 流程面）</h3>
+                                                <div className="space-y-3">
+                                                    {String(proposalDetails.analysisMethod || '').trim() && (
+                                                    <div><p className="font-bold text-gray-800">◆ 職能分析方法與流程<span className="text-[12px] font-normal text-gray-400 ml-2">（對應指標 2.1.1／2.1.2／2.2.1）</span></p><p className="indent-8 whitespace-pre-line">{proposalDetails.analysisMethod}</p></div>
+                                                    )}
+                                                    {String(proposalDetails.stakeholders || '').trim() && (
+                                                    <div><p className="font-bold text-gray-800">◆ 利益關係人／專家參與代表性<span className="text-[12px] font-normal text-gray-400 ml-2">（對應指標 2.2.3）</span></p><p className="indent-8 whitespace-pre-line">{proposalDetails.stakeholders}</p></div>
+                                                    )}
+                                                    {String(proposalDetails.verification || '').trim() && (
+                                                    <div><p className="font-bold text-gray-800">◆ 職能內涵驗證方法與結果<span className="text-[12px] font-normal text-gray-400 ml-2">（對應指標 2.3.2／2.3.3）</span></p><p className="indent-8 whitespace-pre-line">{proposalDetails.verification}</p></div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            )}
                                         </div>
                                     </section>
 
@@ -1315,16 +1677,18 @@
                                         <table className="w-full border-collapse border-[3px] border-gray-800 text-[14px]">
                                             <thead className="bg-gray-200 border-b-[3px] border-gray-800">
                                                 <tr>
-                                                    <th className="border border-gray-800 p-3 w-[20%]">單元名稱與時數</th>
-                                                    <th className="border border-gray-800 p-3 w-[15%]">主要教學法</th>
-                                                    <th className="border border-gray-800 p-3 w-[25%]">單元教學目標</th>
-                                                    <th className="border border-gray-800 p-3 w-[40%]">對應之可評量行為指標 (Behavioral Indicators)</th>
+                                                    <th className="border border-gray-800 p-3 w-[18%]">單元名稱與時數</th>
+                                                    <th className="border border-gray-800 p-3 w-[16%]">對應職能單元／級別</th>
+                                                    <th className="border border-gray-800 p-3 w-[12%]">主要教學法</th>
+                                                    <th className="border border-gray-800 p-3 w-[22%]">單元教學目標</th>
+                                                    <th className="border border-gray-800 p-3 w-[32%]">對應之可評量行為指標 (Behavioral Indicators)</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {syllabus.map((unit, idx) => (
                                                 <tr key={idx}>
                                                     <td className="border border-gray-600 p-4 font-bold bg-gray-50 text-center">{unit.unit}<br/><span className="text-gray-500 font-normal mt-1 inline-block">({unit.hours} 小時)</span></td>
+                                                    <td className="border border-gray-600 p-4 text-center text-[13px]">{unit.competencyUnit}</td>
                                                     <td className="border border-gray-600 p-4 text-center">{unit.method}</td>
                                                     <td className="border border-gray-600 p-4 text-justify leading-relaxed">{unit.objective}</td>
                                                     <td className="border border-gray-600 p-4 whitespace-pre-line font-medium text-blue-900 bg-blue-50/30 leading-relaxed">{unit.indicators}</td>
@@ -1338,6 +1702,12 @@
                                     <section className="print-page-break">
                                         <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-6">伍、 計畫預期效益</h2>
                                         <p className="leading-8 text-[15px] whitespace-pre-line text-justify bg-gray-50 p-6 border border-gray-200">{proposalDetails.benefits}</p>
+                                        {String(proposalDetails.applicationBenefit || '').trim() && (
+                                        <div className="mt-6">
+                                            <h3 className="font-bold mb-2 text-lg">職能基準應用方式與影響人數規模</h3>
+                                            <p className="leading-8 text-[15px] whitespace-pre-line text-justify bg-gray-50 p-6 border border-gray-200">{proposalDetails.applicationBenefit}</p>
+                                        </div>
+                                        )}
                                     </section>
 
                                     {/* 第六章：經費概算表 */}
@@ -1381,6 +1751,13 @@
                                                 </div>
                                             </div>
                                         </div>
+                                    </section>
+
+                                    {/* 第七章（最後一頁）：品質認證自評表 */}
+                                    <section className="print-page-break">
+                                        <h2 className="text-xl font-bold bg-gray-100 border-l-[6px] border-blue-800 pl-4 py-2 mb-4">柒、 品質認證自評表（送審自我檢核）</h2>
+                                        <p className="mb-4 text-sm text-gray-600 leading-relaxed">※ 本表對照「職能導向課程品質認證審查指標（ADDIE 15 項）」與「職能基準品質認證審查指標（I-P-O 21 項）」，共 36 項；每項均自動引用本計畫對應欄位之現況內容作為佐證。標示 <span className="text-rose-600 font-bold">●</span> 者為關鍵指標，任一未符合即為高風險補正項。</p>
+                                        <SelfEvalReport printMode={true} />
                                     </section>
                                 </div>
                             </div>
